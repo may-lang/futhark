@@ -283,23 +283,29 @@ transformStm path (Let pat (StmAux cs _) (Op (Screma w form arrs)))
       distributeMap path pat $ MapLoop cs w lam arrs
 
 transformStm path (Let res_pat (StmAux cs _) (Op (Screma w form arrs)))
-  | Just (scan_fun, nes) <- isScanSOAC form,
-    Just do_iswim <- iswim res_pat w scan_fun $ zip nes arrs = do
+  | Just (scan_lam, nes) <- isScanSOAC form,
+    Just do_iswim <- iswim res_pat w scan_lam $ zip nes arrs = do
       types <- asksScope scopeForSOACs
       transformStms path =<< (stmsToList . snd <$> runBinderT (certifying cs do_iswim) types)
 
-transformStm _ (Let pat (StmAux cs _) (Op (Screma w form arrs)))
+  | Just (scan_lam, scan_nes) <- isScanSOAC form,
+    ScremaForm _ _ map_lam <- form =
+      doScan (scan_lam, scan_nes) (mempty, nilFn, mempty) map_lam
+
   | ScremaForm (scan_lam, scan_nes) (comm, red_lam, red_nes) map_lam <- form,
-    not $ null scan_nes,
-    not $ lambdaContainsParallelism map_lam = do
-      scan_lam_sequential <- Kernelise.transformLambda scan_lam
-      red_lam_sequential <- Kernelise.transformLambda red_lam
-      map_lam_sequential <- Kernelise.transformLambda map_lam
-      runBinder_ $ certifying cs $
-        blockedScan pat w
-        (scan_lam_sequential, scan_nes)
-        (comm, red_lam_sequential, red_nes)
-        map_lam_sequential (intConst Int32 1) [] [] arrs
+    not $ null scan_nes, all primType $ lambdaReturnType scan_lam,
+    not $ lambdaContainsParallelism map_lam =
+      doScan (scan_lam, scan_nes) (comm, red_lam, red_nes) map_lam
+
+  where doScan (scan_lam, scan_nes) (comm, red_lam, red_nes) map_lam = do
+          scan_lam_sequential <- Kernelise.transformLambda scan_lam
+          red_lam_sequential <- Kernelise.transformLambda red_lam
+          map_lam_sequential <- Kernelise.transformLambda map_lam
+          runBinder_ $ certifying cs $
+            blockedScan res_pat w
+            (scan_lam_sequential, scan_nes)
+            (comm, red_lam_sequential, red_nes)
+            map_lam_sequential (intConst Int32 1) [] [] arrs
 
 transformStm path (Let res_pat (StmAux cs _) (Op (Screma w form arrs)))
   | Just (comm, red_fun, nes) <- isReduceSOAC form,
@@ -1059,6 +1065,12 @@ maybeDistributeStm bnd@(Let _ aux (BasicOp (Reshape reshape _))) acc =
     let reshape' = map DimNew (kernelNestWidths nest) ++
                    map DimNew (newDims reshape)
     return $ oneStm $ Let outerpat aux $ BasicOp $ Reshape reshape' arr
+
+maybeDistributeStm stm@(Let _ aux (BasicOp (Rotate rots _))) acc =
+  distributeSingleUnaryStm acc stm $ \nest outerpat arr -> do
+    let rots' = map (const $ intConst Int32 0) (kernelNestWidths nest) ++
+                rots
+    return $ oneStm $ Let outerpat aux $ BasicOp $ Rotate rots' arr
 
 -- XXX?  This rule is present to avoid the case where an in-place
 -- update is distributed as its own kernel, as this would mean thread

@@ -429,7 +429,7 @@ simplifyReplicate _ _ _ _ = cannotSimplify
 arrayLitToReplicate :: BinderOps lore => TopDownRuleBasicOp lore
 arrayLitToReplicate _ pat _ (ArrayLit (se:ses) _)
   | all (==se) ses =
-    let n = constant (genericLength ses + 1 :: Int32)
+    let n = constant (fromIntegral (length ses) + 1 :: Int32)
     in letBind_ pat $ BasicOp $ Replicate (Shape [n]) se
 arrayLitToReplicate _ _ _ _ = cannotSimplify
 
@@ -1143,7 +1143,11 @@ removeFullInPlace :: BinderOps lore => TopDownRuleBasicOp lore
 removeFullInPlace vtable pat _ (Update dest is se)
   | Just dest_t <- ST.lookupType dest vtable,
     isFullSlice (arrayShape dest_t) is =
-      letBind_ pat $ BasicOp $ ArrayLit [se] $ rowType dest_t
+      letBind_ pat $ BasicOp $
+      case se of
+        Var v | not $ null $ sliceDims is ->
+                  Reshape (map DimNew $ arrayDims dest_t) v
+        _ -> ArrayLit [se] $ rowType dest_t
 removeFullInPlace _ _ _ _ =
   cannotSimplify
 

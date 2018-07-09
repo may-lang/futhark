@@ -67,6 +67,7 @@ module Language.Futhark.Syntax
   -- * Definitions
   , DocComment(..)
   , ValBindBase(..)
+  , Liftedness(..)
   , TypeBindBase(..)
   , TypeParamBase(..)
   , typeParamName
@@ -822,12 +823,16 @@ deriving instance Showable f vn => Show (TypeBindBase f vn)
 instance Located (TypeBindBase f vn) where
   locOf = locOf . typeBindLocation
 
+-- | The liftedness of a type parameter.  By the @Ord@ instance,
+-- @Unlifted@ is less than @Lifted@.
+data Liftedness = Unlifted -- ^ May only be instantiated with a zero-order type.
+                | Lifted -- ^ May be instantiated to a functional type.
+                deriving (Eq, Ord, Show)
+
 data TypeParamBase vn = TypeParamDim vn SrcLoc
                         -- ^ A type parameter that must be a size.
-                      | TypeParamType vn SrcLoc
+                      | TypeParamType Liftedness vn SrcLoc
                         -- ^ A type parameter that must be a type.
-                      | TypeParamLiftedType vn SrcLoc
-                        -- ^ A type parameter which may be a function type.
   deriving (Eq, Show)
 
 instance Functor TypeParamBase where
@@ -838,18 +843,15 @@ instance Foldable TypeParamBase where
 
 instance Traversable TypeParamBase where
   traverse f (TypeParamDim v loc) = TypeParamDim <$> f v <*> pure loc
-  traverse f (TypeParamType v loc) = TypeParamType <$> f v <*> pure loc
-  traverse f (TypeParamLiftedType v loc) = TypeParamLiftedType <$> f v <*> pure loc
+  traverse f (TypeParamType l v loc) = TypeParamType l <$> f v <*> pure loc
 
 instance Located (TypeParamBase vn) where
-  locOf (TypeParamDim _ loc)        = locOf loc
-  locOf (TypeParamType _ loc)       = locOf loc
-  locOf (TypeParamLiftedType _ loc) = locOf loc
+  locOf (TypeParamDim _ loc)    = locOf loc
+  locOf (TypeParamType _ _ loc) = locOf loc
 
 typeParamName :: TypeParamBase vn -> vn
-typeParamName (TypeParamDim v _)        = v
-typeParamName (TypeParamType v _)       = v
-typeParamName (TypeParamLiftedType v _) = v
+typeParamName (TypeParamDim v _)    = v
+typeParamName (TypeParamType _ v _) = v
 
 data SpecBase f vn = ValSpec  { specName       :: vn
                               , specTypeParams :: [TypeParamBase vn]
@@ -858,17 +860,17 @@ data SpecBase f vn = ValSpec  { specName       :: vn
                               , specLocation   :: SrcLoc
                               }
                    | TypeAbbrSpec (TypeBindBase f vn)
-                   | TypeSpec vn [TypeParamBase vn] (Maybe DocComment) SrcLoc -- ^ Abstract type.
+                   | TypeSpec Liftedness vn [TypeParamBase vn] (Maybe DocComment) SrcLoc -- ^ Abstract type.
                    | ModSpec vn (SigExpBase f vn) (Maybe DocComment) SrcLoc
                    | IncludeSpec (SigExpBase f vn) SrcLoc
 deriving instance Showable f vn => Show (SpecBase f vn)
 
 instance Located (SpecBase f vn) where
-  locOf (ValSpec _ _ _ _ loc) = locOf loc
-  locOf (TypeAbbrSpec tbind)  = locOf tbind
-  locOf (TypeSpec _ _ _ loc)  = locOf loc
-  locOf (ModSpec _ _ _ loc)   = locOf loc
-  locOf (IncludeSpec _ loc)   = locOf loc
+  locOf (ValSpec _ _ _ _ loc)  = locOf loc
+  locOf (TypeAbbrSpec tbind)   = locOf tbind
+  locOf (TypeSpec _ _ _ _ loc) = locOf loc
+  locOf (ModSpec _ _ _ loc)    = locOf loc
+  locOf (IncludeSpec _ loc)    = locOf loc
 
 data SigExpBase f vn = SigVar (QualName vn) SrcLoc
                      | SigParens (SigExpBase f vn) SrcLoc

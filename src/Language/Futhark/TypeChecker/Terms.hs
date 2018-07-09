@@ -179,10 +179,6 @@ envToTermScope env = TermScope vtable (envTypeTable env) (envNameMap env) mempty
 -- a partial constraint on their type.
 type Constraints = M.Map VName Constraint
 
-data Liftedness = Lifted -- ^ May be a function.
-                | Unlifted -- ^ May not be a function.
-                deriving Show
-
 data Constraint = NoConstraint (Maybe Liftedness) SrcLoc
                 | ParamType Liftedness SrcLoc
                 | Constraint (TypeBase () ()) SrcLoc
@@ -323,8 +319,8 @@ instance MonadTypeChecker TermTypeM where
     (scope, qn'@(QualName qs name)) <- checkQualNameWithEnv Type qn loc
     case M.lookup name $ scopeTypeTable scope of
       Nothing -> undefinedType loc qn
-      Just (TypeAbbr ps def) ->
-        return (qn', ps, qualifyTypeVars outer_env (map typeParamName ps) qs def)
+      Just (TypeAbbr l ps def) ->
+        return (qn', ps, qualifyTypeVars outer_env (map typeParamName ps) qs def, l)
 
   lookupMod loc name = liftTypeM $ TypeM.lookupMod loc name
   lookupMTy loc name = liftTypeM $ TypeM.lookupMTy loc name
@@ -340,7 +336,7 @@ instance MonadTypeChecker TermTypeM where
       Just (WasConsumed wloc) -> useAfterConsume (baseName name) loc wloc
 
       Just (BoundV tparams t)
-        | "_" `isPrefixOf` pretty name -> underscoreUse loc qn
+        | "_" `isPrefixOf` baseString name -> underscoreUse loc qn
         | otherwise -> do
             (tnames, t') <- instantiateTypeScheme loc tparams t
             let qual = qualifyTypeVars outer_env tnames qs
@@ -374,7 +370,7 @@ checkQualNameWithEnv space qn@(QualName [q] _) loc
   | nameToString q == "intrinsics" = do
       -- Check if we are referring to the magical intrinsics
       -- module.
-      (_, QualName _ q') <- liftTypeM $ TypeM.checkQualNameWithEnv Term (QualName [] q) loc
+      (_, QualName _ q') <- liftTypeM $ TypeM.checkQualNameWithEnv Term (qualName q) loc
       if baseTag q' <= maxIntrinsicTag
         then checkIntrinsic space qn loc
         else checkReallyQualName space qn loc
@@ -402,7 +398,7 @@ checkReallyQualName space qn loc = do
 -- in the type.
 checkTypeDecl :: TypeDeclBase NoInfo Name -> TermTypeM (TypeDeclBase Info VName)
 checkTypeDecl tdecl = do
-  tdecl' <- Types.checkTypeDecl tdecl
+  (tdecl', _) <- Types.checkTypeDecl tdecl
   mapM_ observeDim $ nestedDims $ unInfo $ expandedType tdecl'
   return tdecl'
   where observeDim (NamedDim v) = observe $ Ident (qualLeaf v) (Info $ Prim $ Signed Int32) noLoc
@@ -430,8 +426,8 @@ instantiateTypeParam loc tparam = do
   v <- newID $ nameFromString $ baseString (typeParamName tparam) ++ show i
   modifyConstraints $ M.insert v $ NoConstraint (Just l) loc
   return (v, TypeVar (typeName v) [])
-  where l = case tparam of TypeParamType{} -> Unlifted
-                           _               -> Lifted
+  where l = case tparam of TypeParamType x _ _ -> x
+                           _                   -> Lifted
 
 newTypeVar :: SrcLoc -> String -> TermTypeM (TypeBase dim als)
 newTypeVar loc desc = do
@@ -592,7 +588,7 @@ checkPattern' (RecordPattern fs loc) NoneInferred =
   RecordPattern . M.toList <$> traverse (`checkPattern'` NoneInferred) (M.fromList fs) <*> pure loc
 
 checkPattern' (PatternAscription p (TypeDecl t NoInfo) loc) maybe_outer_t = do
-  (t', st) <- checkTypeExp t
+  (t', st, _) <- checkTypeExp t
 
   let st' = fromStruct st
   case maybe_outer_t of
@@ -688,12 +684,9 @@ bindingTypes types m = do
 bindingTypeParams :: [TypeParam] -> TermTypeM a -> TermTypeM a
 bindingTypeParams tparams = binding (mapMaybe typeParamIdent tparams) .
                             bindingTypes (mapMaybe typeParamType tparams)
-  where typeParamType (TypeParamType v loc) =
-          Just (v, (TypeAbbr [] (TypeVar (typeName v) []),
-                    ParamType Unlifted loc))
-        typeParamType (TypeParamLiftedType v loc) =
-          Just (v, (TypeAbbr [] (TypeVar (typeName v) []),
-                    ParamType Lifted loc))
+  where typeParamType (TypeParamType l v loc) =
+          Just (v, (TypeAbbr l [] (TypeVar (typeName v) []),
+                    ParamType l loc))
         typeParamType TypeParamDim{} =
           Nothing
 
@@ -1317,16 +1310,16 @@ checkExp (DoLoop tparams mergepat mergeexp form loopbody loc) =
             | unique pat_v_t,
               v:_ <- S.toList $ aliases t `S.intersection` bound_outside =
                 lift $ typeError loc $ "Loop return value corresponding to merge parameter " ++
-                pretty pat_v ++ " aliases " ++ pretty v ++ "."
+                prettyName pat_v ++ " aliases " ++ prettyName v ++ "."
             | otherwise = do
                 (cons,obs) <- get
                 unless (S.null $ aliases t `S.intersection` cons) $
                   lift $ typeError loc $ "Loop return value for merge parameter " ++
-                  pretty pat_v ++ " aliases other consumed merge parameter."
+                  prettyName pat_v ++ " aliases other consumed merge parameter."
                 when (unique pat_v_t &&
                       not (S.null (aliases t `S.intersection` (cons<>obs)))) $
                   lift $ typeError loc $ "Loop return value for consuming merge parameter " ++
-                  pretty pat_v ++ " aliases previously returned value." ++ show (aliases t, cons, obs)
+                  prettyName pat_v ++ " aliases previously returned value." ++ show (aliases t, cons, obs)
                 if unique pat_v_t
                   then put (cons<>aliases t, obs)
                   else put (cons, obs<>aliases t)
@@ -1481,7 +1474,7 @@ checkFunDef' (fname, maybe_retdecl, tparams, params, body, loc) = noUnique $ do
   bindingPatternGroup tparams (zip params $ repeat NoneInferred) $ \tparams' params' -> do
     maybe_retdecl' <- traverse checkTypeExp maybe_retdecl
 
-    body' <- checkFunBody body (snd <$> maybe_retdecl') (maybe loc srclocOf maybe_retdecl)
+    body' <- checkFunBody body ((\(_,t,_)->t) <$> maybe_retdecl') (maybe loc srclocOf maybe_retdecl)
 
     -- We are now done inferring types.  First we find any remaining
     -- overloaded type variables that were created in this function
@@ -1496,7 +1489,7 @@ checkFunDef' (fname, maybe_retdecl, tparams, params, body, loc) = noUnique $ do
     body_t <- expType body''
 
     (maybe_retdecl'', rettype) <- case maybe_retdecl' of
-      Just (retdecl', retdecl_type) -> do
+      Just (retdecl', retdecl_type, _) -> do
         let rettype_structural = toStructural retdecl_type
         checkReturnAlias rettype_structural params'' body_t
         return (Just retdecl', retdecl_type)
@@ -1606,13 +1599,13 @@ closeOverTypes substs tparams ts = do
           | k `elem` map typeParamName tparams = return ()
           | otherwise =
               typeError (srclocOf v) $
-              unlines ["Type variable `" ++ baseString k ++
+              unlines ["Type variable `" ++ prettyName k ++
                         "' not closed over by type parameters " ++
                         intercalate ", " (map pretty tparams) ++ ".",
                         "This is usually because a parameter needs a type annotation."]
 
-        closeOver (k, NoConstraint (Just Unlifted) loc) = return $ Just $ TypeParamType k loc
-        closeOver (k, NoConstraint _ loc) = return $ Just $ TypeParamLiftedType k loc
+        closeOver (k, NoConstraint (Just Unlifted) loc) = return $ Just $ TypeParamType Unlifted k loc
+        closeOver (k, NoConstraint _ loc) = return $ Just $ TypeParamType Lifted k loc
         closeOver (_, ParamType{}) = return Nothing
         closeOver (_, Constraint{}) = return Nothing
         closeOver (_, Overloaded ots loc) =
@@ -1674,7 +1667,7 @@ removeSeminullOccurences = censor $ filter $ not . seminullOccurence
 checkIfUsed :: Occurences -> Ident -> TermTypeM ()
 checkIfUsed occs v
   | not $ identName v `S.member` allOccuring occs,
-    not $ "_" `isPrefixOf` pretty (identName v) =
+    not $ "_" `isPrefixOf` prettyName (identName v) =
       warn (srclocOf v) $ "Unused variable '"++pretty (baseName $ identName v)++"'."
   | otherwise =
       return ()
@@ -1777,7 +1770,7 @@ linkVarToType loc vn tp = do
   constraints <- getConstraints
   if vn `S.member` typeVars tp
     then typeError loc $ "Occurs check: cannot instantiate " ++
-         pretty vn ++ " with " ++ pretty tp'
+         prettyName vn ++ " with " ++ pretty tp'
     else do modifyConstraints $ M.insert vn $ Constraint tp' loc
             modifyConstraints $ M.map $ applySubstInConstraint vn tp'
             case M.lookup vn constraints of
@@ -1791,7 +1784,7 @@ linkVarToType loc vn tp = do
                       TypeVar (TypeName [] v) []
                         | not $ isRigid v constraints -> linkVarToTypes loc v ts
                       _ ->
-                        typeError loc $ "Cannot unify `" ++ pretty vn ++ "' with type `" ++
+                        typeError loc $ "Cannot unify `" ++ prettyName vn ++ "' with type `" ++
                         pretty tp ++ "' (must be one of " ++ intercalate ", " (map pretty ts) ++
                         " due to use at " ++ locStr old_loc ++ ")."
               Just (HasFields required_fields old_loc) ->
@@ -1809,7 +1802,7 @@ linkVarToType loc vn tp = do
                           intercalate ", " $ map field $ M.toList required_fields
                         field (l, t) = pretty l ++ ": " ++ pretty t
                     in typeError loc $
-                       "Cannot unify `" ++ pretty vn ++ "' with type `" ++
+                       "Cannot unify `" ++ prettyName vn ++ "' with type `" ++
                        pretty tp ++ "' (must be a record with fields {" ++
                        required_fields' ++
                        "} due to use at " ++ locStr old_loc ++ ")."
@@ -1876,7 +1869,7 @@ equalityType loc t = do
             Just (Overloaded _ _) ->
               return () -- All primtypes support equality.
             _ ->
-              typeError loc $ "Type " ++ pretty (baseString vn) ++
+              typeError loc $ "Type " ++ pretty (prettyName vn) ++
               " does not support equality."
 
 zeroOrderType :: (Pretty (ShapeDecl dim), Monoid as) =>
@@ -1898,7 +1891,7 @@ zeroOrderType loc desc t = do
               modifyConstraints $ M.insert vn (NoConstraint (Just Unlifted) loc)
             Just (ParamType Lifted ploc) ->
               typeError loc $ "Type " ++ desc ++
-              " must be non-function, but type parameter " ++ pretty vn ++ " at " ++
+              " must be non-function, but type parameter " ++ prettyName vn ++ " at " ++
               locStr ploc ++ " may be a function."
             _ -> return ()
 

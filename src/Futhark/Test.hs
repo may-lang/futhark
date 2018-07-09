@@ -37,6 +37,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Text.Encoding as T
 import System.FilePath
+import Codec.Compression.GZip
+import Codec.Compression.Zlib.Internal (DecompressError)
+import qualified Control.Exception.Base as E
 
 import Text.Parsec hiding ((<|>), many)
 import Text.Parsec.Text
@@ -176,7 +179,15 @@ parseRunCases = parseRunCases' (0::Int)
           input <- parseInput
           expr <- parseExpectedResult
           return $ TestRun tags input expr $ desc i input
-        desc _ (InFile path) = path
+
+        -- If the file is gzipped, we strip the 'gz' extension from
+        -- the dataset name.  This makes it more convenient to rename
+        -- from 'foo.in' to 'foo.in.gz', as the reported dataset name
+        -- does not change (which would make comparisons to historical
+        -- data harder).
+        desc _ (InFile path)
+          | takeExtension path == ".gz" = dropExtension path
+          | otherwise                   = path
         desc i (Values vs) =
           -- Turn linebreaks into spaces.
           "#" ++ show i ++ " (\"" ++ unwords (lines vs') ++ "\")"
@@ -246,7 +257,7 @@ optimisePipeline = lexstr "distributed" $> KernelsPipeline <|>
                    pure SOACSPipeline
 
 parseMetrics :: Parser AstMetrics
-parseMetrics = braces $ fmap M.fromList $ many $
+parseMetrics = braces $ fmap (AstMetrics . M.fromList) $ many $
                (,) <$> (T.pack <$> lexeme (many1 (satisfy constituent))) <*> parseNatural
   where constituent c = isAlpha c || c == '/'
 
@@ -344,7 +355,7 @@ getValues :: MonadIO m => FilePath -> Values -> m [Value]
 getValues _ (Values vs) =
   return vs
 getValues dir (InFile file) = do
-  s <- liftIO $ BS.readFile file'
+  s <- getValuesBS dir (InFile file)
   case valuesFromByteString file' s of
     Left e   -> fail $ show e
     Right vs -> return vs
@@ -357,5 +368,14 @@ getValuesBS :: MonadIO m => FilePath -> Values -> m BS.ByteString
 getValuesBS _ (Values vs) =
   return $ BS.fromStrict $ T.encodeUtf8 $ T.unlines $ map prettyText vs
 getValuesBS dir (InFile file) =
-  liftIO $ BS.readFile file'
+  case takeExtension file of
+   ".gz" -> liftIO $ do
+     s <- E.try readAndDecompress
+     case s of
+       Left e   -> fail $ show file ++ ": " ++ show (e :: DecompressError)
+       Right s' -> return s'
+
+   _  -> liftIO $ BS.readFile file'
   where file' = dir </> file
+        readAndDecompress = do s <- BS.readFile file'
+                               E.evaluate $ decompress s

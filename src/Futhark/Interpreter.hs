@@ -325,10 +325,9 @@ evalExp (If e1 e2 e3 info) = do
                   _                       -> bad $ TypeError "evalExp If"
   return $ valueShapeContext (bodyTypeValues $ ifReturns info) vs ++ vs
 
-evalExp (Apply fname args rettype _) = do
+evalExp (Apply fname args _ _) = do
   args' <- mapM (evalSubExp . fst) args
-  vs <- evalFuncall fname args'
-  return $ valueShapeContext (retTypeValues rettype) vs ++ vs
+  evalFuncall fname args'
 evalExp (BasicOp op) = evalBasicOp op
 
 evalExp (DoLoop ctxmerge valmerge (ForLoop loopvar it boundexp loopvars) loopbody) = do
@@ -530,7 +529,7 @@ evalBasicOp (Partition n flags arrs) = do
       [] ->
         replicate n $ PrimVal $ IntValue $ Int32Value 0
       first_part:_ ->
-        map (PrimVal . IntValue . Int32Value . genericLength) first_part ++
+        map (PrimVal . IntValue . Int32Value . fromIntegral . length) first_part ++
         [arrayVal (concat part) et (valueShape arrv) |
          (part,et,arrv) <- zip3 partitions ets arrvs]
   where partitionArray flagsv arrv =
@@ -610,7 +609,7 @@ evalSOAC (Scatter w lam ivs dests) = do
   let handleIteration :: [Array Int PrimValue] -> Int -> FutharkM [Array Int PrimValue]
       handleIteration arrs iter = do
         let updatess =
-              [ if idx < 0 || idx >= genericLength (elems a) then []
+              [ if idx < 0 || idx >= fromIntegral (length (elems a)) then []
                 else case val of
                   PrimVal pval -> [(fromIntegral idx, pval)]
                   ArrayVal arr _ _ ->

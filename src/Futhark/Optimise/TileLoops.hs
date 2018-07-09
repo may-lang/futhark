@@ -13,6 +13,7 @@ import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import Data.Semigroup ((<>))
 import Data.List
+import Data.Maybe
 
 import Futhark.MonadFreshNames
 import Futhark.Representation.Kernels
@@ -166,7 +167,9 @@ tileInStms branch_variant initial_variance initial_kspace kstms = do
 
         tileInKernelStatement (kspace, extra_bnds)
           (Let pat attr (Op (GroupStream w maxchunk lam accs arrs))) = do
-          (bnds, kspace', lam') <- tileInStreamLambda branch_variant variance kspace lam
+          let branch_variant' = branch_variant <>
+                                fromMaybe mempty (flip M.lookup variance =<< subExpVar w)
+          (bnds, kspace', lam') <- tileInStreamLambda branch_variant' variance kspace lam
           return ((kspace', extra_bnds <> bnds),
                   Let pat attr $ Op $ GroupStream w maxchunk lam' accs arrs)
 
@@ -289,7 +292,6 @@ is2dTileable :: MonadFreshNames m =>
                 Names -> KernelSpace -> VarianceTable -> SubExp -> VName -> LParam InKernel
              -> Maybe (SubExp -> [VName] -> m (LParam InKernel, Stms InKernel))
 is2dTileable branch_variant kspace variance block_size arr block_param = do
-  guard $ S.null branch_variant
   guard $ primType $ rowType $ paramType block_param
 
   pt <- case rowType $ paramType block_param of
@@ -324,15 +326,12 @@ is2dTileable branch_variant kspace variance block_size arr block_param = do
           Op $ Combine block_cspace [Prim pt] [(global_i, global_d)] $
           Body () (oneStm read_elem_bnd) [Var elem_name]
 
-    block_param_aux_name <- newVName $ baseString $ paramName block_param
-    let block_param_aux = Ident block_param_aux_name $
-                          rearrangeType inner_perm $ patElemType block_pe
     let index_block_kstms =
-          [mkLet [] [block_param_aux] $
-            BasicOp $ Rearrange inner_perm block_name_2d,
-           mkLet [] [paramIdent block_param] $
-            BasicOp $ Index (identName block_param_aux) $
-            fullSlice (identType block_param_aux) [DimFix $ Var variant_i]]
+          [mkLet [] [paramIdent block_param] $
+            BasicOp $ Index block_name_2d $
+            rearrangeShape inner_perm $
+            fullSlice (rearrangeType inner_perm $ patElemType block_pe)
+            [DimFix $ Var variant_i]]
 
     return (outer_block_param,
             oneStm write_block_stm <> stmsFromList index_block_kstms)
@@ -341,9 +340,10 @@ is2dTileable branch_variant kspace variance block_size arr block_param = do
         invariantToOneOfTwoInnerDims = do
           (j,_) : (i,_) : _ <- Just $ reverse $ spaceDimensions kspace
           let variant_to = M.findWithDefault mempty arr variance
-          if i `S.member` variant_to && not (j `S.member` variant_to) then
+              branch_invariant = not $ S.member j branch_variant || S.member i branch_variant
+          if branch_invariant && i `S.member` variant_to && not (j `S.member` variant_to) then
             Just [0,1]
-          else if j `S.member` variant_to && not (i `S.member` variant_to) then
+          else if branch_invariant && j `S.member` variant_to && not (i `S.member` variant_to) then
             Just [1,0]
           else
             Nothing

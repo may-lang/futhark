@@ -37,7 +37,7 @@ import Language.Futhark.Syntax (BinOp(..))
 @hexlit = 0[xX][0-9a-fA-F][0-9a-fA-F_]*
 @declit = [0-9][0-9_]*
 @binlit = 0[bB][01][01_]*
-@romlit = 0[rR][IVXLCM][IVXLCM_]*
+@romlit = 0[rR][IVXLCDM][IVXLCDM_]*
 @intlit = @hexlit|@binlit|@declit|@romlit
 @reallit = (([0-9][0-9_]*("."[0-9][0-9_]*)?))([eE][\+\-]?[0-9]+)?
 @hexreallit = 0[xX][0-9a-fA-F][0-9a-fA-F_]*"."[0-9a-fA-F][0-9a-fA-F_]*([pP][\+\-]?[0-9]+)
@@ -79,7 +79,6 @@ tokens :-
   "<-"                     { tokenC LEFT_ARROW }
   ":"                      { tokenC COLON }
   "."                      { tokenC DOT }
-  "@"                      { tokenC AT }
   "\"                      { tokenC BACKSLASH }
   "'"                      { tokenC APOSTROPHE }
   "'^"                     { tokenC APOSTROPHE_THEN_HAT }
@@ -144,16 +143,9 @@ keyword s =
     "type"         -> TYPE
     "entry"        -> ENTRY
     "module"       -> MODULE
-    "empty"        -> EMPTY
     "while"        -> WHILE
     "unsafe"       -> UNSAFE
     "assert"       -> ASSERT
-
--- In a perfect language, the remaining tokens would all be functions.
--- Perhaps we can eventually permit their use as variable names anyway.
-
-    "zip"          -> ZIP
-    "unzip"        -> UNZIP
 
     _              -> ID $ nameFromText s
 
@@ -188,7 +180,7 @@ readIntegral s
   | otherwise =
       T.foldl (another decimal_digits) 0 s
       where another digits acc c = acc * base + maybe 0 fromIntegral (elemIndex (toLower c) digits)
-              where base = genericLength digits
+              where base = fromIntegral $ length digits
 
             binary_digits = ['0', '1']
             decimal_digits = ['0'..'9']
@@ -222,6 +214,7 @@ symbol [] q
   | nameToText q == "*" = ASTERISK
   | nameToText q == "-" = NEGATE
   | nameToText q == "<" = LTH
+  | nameToText q == "^" = HAT
   | otherwise = SYMBOL (leadingOperator q) [] q
 symbol qs q = SYMBOL (leadingOperator q) qs q
 
@@ -319,7 +312,6 @@ data Token = ID Name
            | CHARLIT Char
 
            | COLON
-           | AT
            | BACKSLASH
            | APOSTROPHE
            | APOSTROPHE_THEN_HAT
@@ -346,6 +338,7 @@ data Token = ID Name
            | ASTERISK
            | NEGATE
            | LTH
+           | HAT
 
            | IF
            | THEN
@@ -356,14 +349,10 @@ data Token = ID Name
            | FOR
            | DO
            | WITH
-           | REARRANGE
-           | ZIP
-           | UNZIP
            | UNSAFE
            | ASSERT
            | TRUE
            | FALSE
-           | EMPTY
            | WHILE
            | INCLUDE
            | IMPORT

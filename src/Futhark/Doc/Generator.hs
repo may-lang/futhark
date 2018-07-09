@@ -5,7 +5,7 @@ import Control.Arrow ((***))
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Data.List (sortBy, intersperse, inits, tails, isPrefixOf, find, groupBy, partition)
+import Data.List (sort, sortBy, intersperse, inits, tails, isPrefixOf, find, groupBy, partition)
 import Data.Char (isSpace, isAlpha, toUpper)
 import Data.Loc
 import Data.Maybe
@@ -75,7 +75,7 @@ specRow a b c = H.tr $ (H.td ! A.class_ "spec_lhs") a <>
 vnameToFileMap :: Imports -> FileMap
 vnameToFileMap = mconcat . map forFile
   where forFile (file, FileModule abs file_env _prog) =
-          mconcat (map (vname Type) (S.toList abs)) <>
+          mconcat (map (vname Type) (M.keys abs)) <>
           forEnv file_env
           where vname ns v = M.singleton (qualLeaf v) (file, ns)
                 vname' ((ns, _), v) = vname ns v
@@ -101,8 +101,8 @@ renderFiles important_imports imports = runWriter $ do
 
     return (current,
             (H.docTypeHtml ! A.lang "en" $
-             addBoilerplate ("doc" </> current) current $
-             maybe_abstract <>
+             addBoilerplateWithNav important_imports ("doc" </> current) current $
+             H.main $ maybe_abstract <>
              selfLink "synopsis" (H.h2 "Synopsis") <> (H.div ! A.id "overview") synopsis <>
              selfLink "description" (H.h2 "Description") <> description <>
              maybe_sections,
@@ -110,7 +110,7 @@ renderFiles important_imports imports = runWriter $ do
 
   return $
     [("index.html", contentsPage important_imports $ map (fmap snd) import_pages),
-     ("doc-index.html", indexPage documented file_map)]
+     ("doc-index.html", indexPage important_imports documented file_map)]
     ++ map (importHtml *** fst) import_pages
   where file_map = vnameToFileMap imports
         importHtml import_name = "doc" </> import_name <.> "html"
@@ -139,7 +139,7 @@ headerDoc prog =
 contentsPage :: [FilePath] -> [(String, Html)] -> Html
 contentsPage important_imports pages =
   H.docTypeHtml $ addBoilerplate "index.html" "Futhark Library Documentation" $
-  H.h2 "Main libraries" <>
+  H.main $ H.h2 "Main libraries" <>
   fileList important_pages <>
   if null unimportant_pages then mempty else
     H.h2 "Supporting libraries" <>
@@ -152,14 +152,19 @@ contentsPage important_imports pages =
           mconcat $ map linkTo $ sortBy (comparing fst) pages'
 
         linkTo (name, maybe_abstract) =
-          let file = makeRelative "/" $ "doc" </> name -<.> "html"
-          in H.div ! A.class_ "file_desc" $
-             (H.dt ! A.class_ "desc_header") (H.a ! A.href (fromString file) $ fromString name) <>
-             (H.dd ! A.class_ "desc_doc") maybe_abstract
+          H.div ! A.class_ "file_desc" $
+          (H.dt ! A.class_ "desc_header") (importLink "index.html" name) <>
+          (H.dd ! A.class_ "desc_doc") maybe_abstract
 
-indexPage :: Documented -> FileMap -> Html
-indexPage documented fm =
-  H.docTypeHtml $ addBoilerplate "doc-index.html" "Index" $
+importLink :: FilePath -> String -> Html
+importLink current name =
+  let file = relativise (makeRelative "/" $ "doc" </> name -<.> "html") current
+  in (H.a ! A.href (fromString file) $ fromString name)
+
+indexPage :: [FilePath] -> Documented -> FileMap -> Html
+indexPage important_imports documented fm =
+  H.docTypeHtml $ addBoilerplateWithNav important_imports "doc-index.html" "Index" $
+  H.main $
   (H.ul ! A.id "doc_index_list" $
    mconcat $ map initialListEntry $
    letter_group_links ++ [symbol_group_link]) <>
@@ -220,7 +225,7 @@ indexPage documented fm =
               (H.a ! A.href (fromString html_file) $ fromString file))
 
 addBoilerplate :: String -> String -> Html -> Html
-addBoilerplate current titleText bodyHtml =
+addBoilerplate current titleText content =
   let headHtml = H.head $
                  H.meta ! A.charset "utf-8" <>
                  H.title (fromString titleText) <>
@@ -237,10 +242,17 @@ addBoilerplate current titleText bodyHtml =
         <> " " <> fromString (showVersion version)
   in headHtml <>
      H.body ((H.div ! A.id "header") (H.h1 (toHtml titleText) <> navigation) <>
-             (H.div ! A.id "content") bodyHtml <>
+             (H.div ! A.id "content") content <>
              (H.div ! A.id "footer") madeByHtml)
   where futhark_doc_url =
           "https://futhark.readthedocs.io/en/latest/man/futhark-doc.html"
+
+addBoilerplateWithNav :: [FilePath] -> String -> String -> Html -> Html
+addBoilerplateWithNav important_imports current titleText content =
+  addBoilerplate current titleText $
+  (H.nav ! A.id "filenav" $ files) <> content
+  where files = H.ul $ mconcat $ map pp $ sort important_imports
+        pp name = H.li $ importLink current name
 
 synopsisDecs :: [Dec] -> DocM Html
 synopsisDecs decs = do
@@ -345,7 +357,7 @@ renderValBind :: (VName, BoundV) -> DocM Html
 renderValBind = fmap H.div . synopsisValBindBind
 
 renderTypeBind :: (VName, TypeBinding) -> DocM Html
-renderTypeBind (name, TypeAbbr tps tp) = do
+renderTypeBind (name, TypeAbbr l tps tp) = do
   tp' <- typeHtml tp
   return $ H.div $ typeAbbrevHtml (vnameHtml name) tps <> " = " <> tp'
 
@@ -459,8 +471,10 @@ synopsisSpec :: SpecBase Info VName -> DocM Html
 synopsisSpec spec = case spec of
   TypeAbbrSpec tpsig ->
     fullRow <$> typeBindHtml (vnameSynopsisDef $ typeAlias tpsig) tpsig
-  TypeSpec name ps _ _ ->
+  TypeSpec Unlifted name ps _ _ ->
     return $ fullRow $ "type " <> vnameSynopsisDef name <> joinBy " " (map typeParamHtml ps)
+  TypeSpec Lifted name ps _ _ ->
+    return $ fullRow $ "type ^" <> vnameSynopsisDef name <> joinBy " " (map typeParamHtml ps)
   ValSpec name tparams rettype _ _ -> do
     let tparams' = map typeParamHtml tparams
     rettype' <- noLink (map typeParamName tparams) $
@@ -555,8 +569,8 @@ typeArgExpHtml (TypeArgExpType d) = typeExpHtml d
 
 typeParamHtml :: TypeParam -> Html
 typeParamHtml (TypeParamDim name _) = brackets $ vnameHtml name
-typeParamHtml (TypeParamType name _) = "'" <> vnameHtml name
-typeParamHtml (TypeParamLiftedType name _) = "'^" <> vnameHtml name
+typeParamHtml (TypeParamType Unlifted name _) = "'" <> vnameHtml name
+typeParamHtml (TypeParamType Lifted name _) = "'^" <> vnameHtml name
 
 typeAbbrevHtml :: Html -> [TypeParam] -> Html
 typeAbbrevHtml name params =
@@ -689,7 +703,7 @@ describeSpec (ValSpec name tparams t doc _) =
                then IndexValue else IndexFunction
 describeSpec (TypeAbbrSpec vb) =
   describeGeneric (typeAlias vb) IndexType (typeDoc vb) (`typeBindHtml` vb)
-describeSpec (TypeSpec name tparams doc _) =
+describeSpec (TypeSpec liftedness name tparams doc _) =
   describeGeneric name IndexType doc $ return . (`typeAbbrevHtml` tparams)
 describeSpec (ModSpec name se doc _) =
   describeGenericMod name IndexModule se doc $ \name' ->

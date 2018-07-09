@@ -219,14 +219,15 @@ data CompilerEnv op s = CompilerEnv {
 data CompilerAcc op s = CompilerAcc {
     accItems :: DL.DList C.BlockItem
   , accDeclaredMem :: [(VName,Space)]
+  , accFreedMem :: [VName]
   }
 
 instance Sem.Semigroup (CompilerAcc op s) where
-  CompilerAcc items1 declared1 <> CompilerAcc items2 declared2 =
-    CompilerAcc (items1<>items2) (declared1<>declared2)
+  CompilerAcc items1 declared1 freed1 <> CompilerAcc items2 declared2 freed2 =
+    CompilerAcc (items1<>items2) (declared1<>declared2) (freed1<>freed2)
 
 instance Monoid (CompilerAcc op s) where
-  mempty = CompilerAcc mempty mempty
+  mempty = CompilerAcc mempty mempty mempty
   mappend = (Sem.<>)
 
 envOpCompiler :: CompilerEnv op s -> OpCompiler op s
@@ -625,18 +626,18 @@ typeToCType t = do
 
 primTypeInfo :: PrimType -> Signedness -> C.Exp
 primTypeInfo (IntType it) t = case (it, t) of
-  (Int8,  TypeUnsigned) -> [C.cexp|u8|]
-  (Int16, TypeUnsigned) -> [C.cexp|u16|]
-  (Int32, TypeUnsigned) -> [C.cexp|u32|]
-  (Int64, TypeUnsigned) -> [C.cexp|u64|]
-  (Int8,  _) -> [C.cexp|i8|]
-  (Int16, _) -> [C.cexp|i16|]
-  (Int32, _) -> [C.cexp|i32|]
-  (Int64, _) -> [C.cexp|i64|]
-primTypeInfo (FloatType Float32) _ = [C.cexp|f32|]
-primTypeInfo (FloatType Float64) _ = [C.cexp|f64|]
-primTypeInfo Bool _ = [C.cexp|bool|]
-primTypeInfo Cert _ = [C.cexp|bool|]
+  (Int8,  TypeUnsigned) -> [C.cexp|u8_info|]
+  (Int16, TypeUnsigned) -> [C.cexp|u16_info|]
+  (Int32, TypeUnsigned) -> [C.cexp|u32_info|]
+  (Int64, TypeUnsigned) -> [C.cexp|u64_info|]
+  (Int8,  _) -> [C.cexp|i8_info|]
+  (Int16, _) -> [C.cexp|i16_info|]
+  (Int32, _) -> [C.cexp|i32_info|]
+  (Int64, _) -> [C.cexp|i64_info|]
+primTypeInfo (FloatType Float32) _ = [C.cexp|f32_info|]
+primTypeInfo (FloatType Float64) _ = [C.cexp|f64_info|]
+primTypeInfo Bool _ = [C.cexp|bool_info|]
+primTypeInfo Cert _ = [C.cexp|bool_info|]
 
 copyMemoryDefaultSpace :: C.Exp -> C.Exp -> C.Exp -> C.Exp -> C.Exp ->
                           CompilerM op s ()
@@ -825,7 +826,7 @@ prepareEntryInputs = fmap snd . mapAccumLM prepare mempty . zip [(0::Int)..]
           let pname = "in" ++ show pno
           (known_sizes', ty) <- prepareValue known_sizes ([C.cexp|$id:pname|], vd)
           return (known_sizes',
-                  [C.cparam|$ty:ty $id:pname|])
+                  [C.cparam|const $ty:ty $id:pname|])
 
         prepare known_sizes (pno, OpaqueValue desc vds) = do
           ty <- opaqueToCType desc vds
@@ -835,7 +836,7 @@ prepareEntryInputs = fmap snd . mapAccumLM prepare mempty . zip [(0::Int)..]
           (known_sizes', _) <-
             mapAccumLM prepareValue known_sizes $ zip (zipWith field [0..] vds) vds
           return (known_sizes',
-                  [C.cparam|$ty:ty *$id:pname|])
+                  [C.cparam|const $ty:ty *$id:pname|])
 
         prepareValue known_sizes (src, ScalarValue pt signed name) = do
           let pt' = signedPrimTypeToCType signed pt
@@ -871,7 +872,7 @@ prepareEntryInputs = fmap snd . mapAccumLM prepare mempty . zip [(0::Int)..]
                 assertSameSize expected got =
                   [C.cstm|if ($exp:expected != $exp:got) {
                             fprintf(stderr, "Parameter %s has bad dimension (expected %d, got %d).\n",
-                                    $string:(pretty src), $exp:expected, $exp:got);
+                                    $string:(pretty src), (int)$exp:expected, (int)$exp:got);
                             exit(1);
                           }|]
 
@@ -937,7 +938,7 @@ onEntryPoint fname function@(Function _ outputs inputs _ results args) = do
   outputdecls <- collect $ mapM_ stubParam outputs
 
   let entry_point_name = nameToString fname
-      entry_point_function_name = "futhark_" ++ entry_point_name
+      entry_point_function_name = "futhark_entry_" ++ entry_point_name
 
   (entry_point_input_params, unpack_entry_inputs) <-
     collect' $ prepareEntryInputs args
@@ -1119,7 +1120,7 @@ cliEntryPoint fname (Function _ _ _ _ results args) = do
 
   let entry_point_name = nameToString fname
       cli_entry_point_function_name = "futrts_cli_entry_" ++ entry_point_name
-      entry_point_function_name = "futhark_" ++ entry_point_name
+      entry_point_function_name = "futhark_entry_" ++ entry_point_name
 
       run_it = [C.citems|
                   /* Run the program once. */
@@ -1261,6 +1262,7 @@ compileProg ops extra userstate spaces options prog@(Functions funs) = do
   let headerdefs = [C.cunit|
 $esc:("#include <stdint.h>")
 $esc:("#include <stddef.h>")
+$esc:("#include <stdbool.h>")
 
 $esc:("\n/*\n * Initialisation\n*/\n")
 $edecls:(initDecls endstate)
@@ -1281,6 +1283,12 @@ $edecls:(miscDecls endstate)
   let utildefs = [C.cunit|
 $esc:("#include <stdio.h>")
 $esc:("#include <stdlib.h>")
+$esc:("#include <stdbool.h>")
+$esc:("#include <math.h>")
+/* If NDEBUG is set, the assert() macro will do nothing. Since Futhark
+   (unfortunately) makes use of assert() for error detection (and even some
+   side effects), we want to avoid that. */
+$esc:("#undef NDEBUG")
 $esc:("#include <assert.h>")
 
 $esc:panic_h
@@ -1374,7 +1382,6 @@ $esc:("#ifdef _MSC_VER\n#define inline __inline\n#endif")
 $esc:("#include <string.h>")
 $esc:("#include <stdint.h>")
 $esc:("#include <inttypes.h>")
-$esc:("#include <math.h>")
 $esc:("#include <ctype.h>")
 $esc:("#include <errno.h>")
 $esc:("#include <assert.h>")
@@ -1667,6 +1674,10 @@ compileCode (Allocate name (Count e) space) = do
   size <- compileExp e
   allocMem name size space
 
+compileCode (Free name space) = do
+  unRefMem name space
+  tell $ mempty { accFreedMem = [name] }
+
 compileCode (For i it bound body) = do
   let i' = C.toIdent i
       it' = intTypeToCType it
@@ -1793,7 +1804,8 @@ blockScope' :: CompilerM op s a -> CompilerM op s (a, [C.BlockItem])
 blockScope' m = pass $ do
   (x, w) <- listen m
   let items = DL.toList $ accItems w
-  releases <- collect $ mapM_ (uncurry unRefMem) $ accDeclaredMem w
+      to_unref = filter (not . (`elem` accFreedMem w) . fst) $ accDeclaredMem w
+  releases <- collect $ mapM_ (uncurry unRefMem) to_unref
   return ((x, items ++ releases),
           const mempty)
 
