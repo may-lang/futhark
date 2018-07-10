@@ -2,14 +2,17 @@
 module Main (main) where
 
 import Control.Monad.IO.Class
-import System.FilePath
 import System.Directory
+import System.Environment
+import System.Exit
+import System.FilePath
 
 import Futhark.Pipeline
 import Futhark.Passes
 import qualified Futhark.CodeGen.Backends.CSOpenCL as CSOpenCL
 import Futhark.Util.Pretty (prettyText)
 import Futhark.Compiler.CLI
+import Futhark.Util
 
 main :: IO ()
 main = compilerMain () []
@@ -21,12 +24,30 @@ main = compilerMain () []
           csprog <- either (`internalError` prettyText prog) return =<<
                     CSOpenCL.compileProg class_name prog
 
+          let cspath = outpath `addExtension` "cs"
+          liftIO $ writeFile cspath csprog
 
-          let outpath' = outpath `addExtension` "cs"
-          liftIO $ writeFile outpath' csprog
+          mono_libs <- liftIO $ getEnv "MONO_LIBS"
           case mode of
-            ToLibrary ->
-              return ()
-            ToExecutable -> liftIO $ do
-              perms <- liftIO $ getPermissions outpath'
-              setPermissions outpath' $ setOwnerExecutable False perms
+            ToLibrary -> do
+              let dllpath = outpath `addExtension` "dll"
+              ret <- liftIO $ runProgramWithExitCode "csc"
+                ["-out:" ++ dllpath, "-target:library", "-lib:"++mono_libs, "-r:Cloo.clSharp.dll,Mono.Options.dll", cspath, "/unsafe"] ""
+              case ret of
+                Left err ->
+                  externalErrorS $ "Failed to run csc: " ++ show err
+                Right (ExitFailure code, cscwarn, cscerr) ->
+                  externalErrorS $ "csc failed with code " ++ show code ++ ":\n" ++ cscerr ++ cscwarn
+                Right (ExitSuccess, _, _) -> liftIO $ return ()
+
+            ToExecutable -> do
+              ret <- liftIO $ runProgramWithExitCode "csc"
+                ["-out:" ++ outpath, "-lib:"++mono_libs, "-r:Cloo.clSharp.dll,Mono.Options.dll", cspath, "/unsafe"] ""
+              case ret of
+                Left err ->
+                  externalErrorS $ "Failed to run csc: " ++ show err
+                Right (ExitFailure code, cscwarn, cscerr) ->
+                  externalErrorS $ "csc failed with code " ++ show code ++ ":\n" ++ cscerr ++ cscwarn
+                Right (ExitSuccess, _, _) -> liftIO $ do
+                  perms <- liftIO $ getPermissions outpath
+                  setPermissions outpath $ setOwnerExecutable True perms
