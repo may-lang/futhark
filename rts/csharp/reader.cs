@@ -496,8 +496,8 @@
                 if (c != null) {
                     UngetChar((char)c);
                 }
+                break;
             }
-            break;
         }
 
         if (read_dims == 0) {
