@@ -139,7 +139,8 @@ data CSExp = Integer Integer
            | Out CSExp
            | Deref String
            | BinOp String CSExp CSExp
-           | UnOp String CSExp
+           | PreUnOp String CSExp
+           | PostUnOp String CSExp
            | Ternary CSExp CSExp CSExp
            | Cond CSExp CSExp CSExp
            | Index CSExp CSIdx
@@ -176,7 +177,8 @@ instance Pretty CSExp where
   ppr (Out e) =  text "out" <+> ppr e
   ppr (Deref n) =  text "*" <> text (map (\x -> if x == '\'' then 'm' else x) n)
   ppr (BinOp s e1 e2) = parens(ppr e1 <+> text s <+> ppr e2)
-  ppr (UnOp s e) = text s <> parens (ppr e)
+  ppr (PreUnOp s e) = text s <> parens (ppr e)
+  ppr (PostUnOp s e) = parens (ppr e) <> text s
   ppr (Ternary b e1 e2) = ppr b <+> text "?" <+> ppr e1 <+> colon <+> ppr e2
   ppr (Cond e1 e2 e3) = text "if" <+> parens(ppr e1) <> braces(ppr e2) <+> text "else" <> braces(ppr e3)
   ppr (Cast bt src) = parens(ppr bt) <+> ppr src
