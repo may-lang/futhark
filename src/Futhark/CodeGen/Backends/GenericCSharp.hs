@@ -175,14 +175,15 @@ data CompilerEnv op s = CompilerEnv {
 data CompilerAcc op s = CompilerAcc {
     accItems :: [CSStmt]
   , accDeclaredMem :: [(VName,Space)]
+  , accFreedMem :: [VName]
   }
 
 instance Sem.Semigroup (CompilerAcc op s) where
-  CompilerAcc items1 declared1 <> CompilerAcc items2 declared2 =
-    CompilerAcc (items1<>items2) (declared1<>declared2)
+  CompilerAcc items1 declared1 freed1 <> CompilerAcc items2 declared2 freed2 =
+    CompilerAcc (items1<>items2) (declared1<>declared2) (freed1<>freed2)
 
 instance Monoid (CompilerAcc op s) where
-  mempty = CompilerAcc mempty mempty
+  mempty = CompilerAcc mempty mempty mempty
   mappend = (Sem.<>)
 
 envOpCompiler :: CompilerEnv op s -> OpCompiler op s
@@ -769,13 +770,15 @@ formatString :: String -> [CSExp] -> CSExp
 formatString fmt contents =
   simpleCall "String.Format" $ String fmt : contents
 
-printStm :: Imp.ValueDesc -> CSExp -> CompilerM op s CSStmt
-printStm (Imp.ScalarValue bt ept _) e =
+printStm :: Imp.ValueDesc -> CSExp -> CSExp -> CompilerM op s CSStmt
+printStm (Imp.ScalarValue bt ept _) _ e =
   return $ printPrimStm e bt ept
-printStm (Imp.ArrayValue _ _ _ bt ept []) e =
-  return $ printPrimStm e bt ept
-printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
-  v <- newVName "print_elem"
+printStm (Imp.ArrayValue _ _ _ bt ept []) ind e = do
+  let e' = Index e (IdxExp (PostUnOp "++" ind))
+  return $ printPrimStm e' bt ept
+
+printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) ind e = do
+  ptr <- newVName "shape_ptr"
   first <- newVName "print_first"
   let size = callMethod (CreateArray (Primitive $ CSInt Int32T) $ map compileDim $ outer:shape)
                  "Aggregate" [ Integer 1
@@ -783,18 +786,22 @@ printStm (Imp.ArrayValue mem memsize space bt ept (outer:shape)) e = do
                                       [Exp $ BinOp "*" (Var "acc") (Var "val")]
                              ]
       emptystr = "empty(" ++ ppArrayType bt (length shape) ++ ")"
-  printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) $ Var $ compileName v
-  return $ If (BinOp "==" size (Integer 0))
-    [puts emptystr]
-    [Assign (Var $ pretty first) $ Var "true",
-     puts "[",
-     ForEach (pretty v) (Field e "Item1") [
-        If (simpleCall "!" [Var $ pretty first])
-        [puts ", "] [],
-        printelem,
-        Reassign (Var $ pretty first) $ Var "false"
-    ],
-    puts "]"]
+
+  printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) ind e
+  --printelem <- printStm (Imp.ArrayValue mem memsize space bt ept shape) inds $ Var $ compileName v
+  return $
+    If (BinOp "==" size (Integer 0))
+      [puts emptystr]
+    [ Assign (Var $ pretty first) $ Var "true"
+    , puts "["
+    , For (pretty ptr) (compileDim outer)
+      [ If (simpleCall "!" [Var $ pretty first]) [puts ", "] []
+      , printelem
+      , Reassign (Var $ pretty first) $ Var "false"
+      ]
+    , puts "]"
+    ]
+
     where ppArrayType :: PrimType -> Int -> String
           ppArrayType t 0 = prettyPrimType ept t
           ppArrayType t n = "[]" ++ ppArrayType t (n-1)
@@ -817,9 +824,19 @@ printValue = fmap concat . mapM (uncurry printValue')
   where printValue' (Imp.OpaqueValue desc _) _ =
           return [Exp $ simpleCall "Console.Write"
                   [String $ "#<opaque " ++ desc ++ ">"]]
-        printValue' (Imp.TransparentValue r) e = do
-          p <- printStm r e
+        printValue' (Imp.TransparentValue r@Imp.ScalarValue{}) e = do
+          p <- printStm r (Integer 0) e
           return [p, Exp $ simpleCall "Console.Write" [String "\n"]]
+        printValue' (Imp.TransparentValue r@Imp.ArrayValue{}) e = do
+          tuple <- newVName "result_arr"
+          i <- newVName "arr_ind"
+          let i' = Var $ compileName i
+          p <- printStm r i' (Var $ compileName tuple)
+          let e' = Var $ pretty e
+          return [ Assign (Var $ compileName tuple) (Field e' "Item1")
+                 , Assign i' (Integer 0)
+                 , p
+                 , Exp $ simpleCall "Console.Write" [String "\n"]]
 
 prepareEntry :: (Name, Imp.Function op) -> CompilerM op s
                 (String, [(CSType, String)], CSType, [CSStmt], [CSStmt], [CSStmt], [CSStmt],
@@ -1200,14 +1217,15 @@ compileCode (Imp.DeclareScalar v t) =
   stm $ AssignTyped t' (Var $ compileName v) Nothing
   where t' = compilePrimTypeToAST t
 
-compileCode (Imp.DeclareArray name DefaultSpace t vs) = do
-  atInit $ Assign (Var $ "init_"++name') $
-    simpleCall "unwrapArray"
-    [
-      CreateArray (compilePrimTypeToAST t) (map compilePrimValue vs)
-    , simpleCall "sizeof" [Var $ compilePrimType t]
-    ]
-  stm $ Assign (Var name') $ Var ("init_"++name')
+compileCode (Imp.DeclareArray name DefaultSpace t vs) =
+  stms [Assign (Var $ "init_"++name') $
+        simpleCall "unwrapArray"
+         [
+           CreateArray (compilePrimTypeToAST t) (map compilePrimValue vs)
+         , simpleCall "sizeof" [Var $ compilePrimType t]
+         ]
+       , Assign (Var name') $ Var ("init_"++name')
+       ]
   where name' = compileName name
 
 
@@ -1255,6 +1273,14 @@ compileCode (Imp.Allocate name (Imp.Count e) (Imp.Space space)) = do
     <*> compileExp e
     <*> pure space
 
+compileCode (Imp.Free _ _) = stm Pass
+{-*
+compileCode (Imp.Free name space) = do
+  unRefMem name space
+  tell $ mempty { accFreedMem = [name] }
+ *-}
+
+
 compileCode (Imp.Copy dest (Imp.Count destoffset) DefaultSpace src (Imp.Count srcoffset) DefaultSpace (Imp.Count size)) = do
   destoffset' <- compileExp destoffset
   srcoffset' <- compileExp srcoffset
@@ -1295,16 +1321,18 @@ blockScope' :: CompilerM op s a -> CompilerM op s (a, [CSStmt])
 blockScope' m = pass $ do
   (x, w) <- listen m
   let items = accItems w
-  releases <- mapM (uncurry unRefMem) $ accDeclaredMem w
-  return ((x, items ++ releases),
-          const mempty)
+      to_unref = filter (not . (`elem` accFreedMem w) . fst) $ accDeclaredMem w
+  releases <- collect $ mapM_ (uncurry unRefMem) to_unref
+  return ((x, items ++ releases)
+         , const mempty)
 
-unRefMem :: VName -> Space -> CompilerM op s CSStmt
+unRefMem :: VName -> Space -> CompilerM op s ()
 unRefMem mem (Space "device") =
-  (return . Exp) $ simpleCall "MemblockUnrefDevice" [ Ref $ Var "ctx"
-                                                    , (Ref . Var . compileName) mem
-                                                    , (String . compileName) mem]
-unRefMem _ DefaultSpace = return Pass
+  (stm . Exp) $ simpleCall "MemblockUnrefDevice" [ Ref $ Var "ctx"
+                                                 , (Ref . Var . compileName) mem
+                                                 , (String . compileName) mem]
+unRefMem _ DefaultSpace = stm Pass
+unRefMem _ (Space "local") = stm Pass
 unRefMem _ (Space _) = fail "The default compiler cannot compile unRefMem for other spaces"
 
 
@@ -1320,7 +1348,7 @@ declMem' :: String -> Space -> CSStmt
 declMem' name DefaultSpace =
   AssignTyped (Composite $ ArrayT $ Primitive ByteT) (Var name) Nothing
 declMem' name (Space _) =
-  Comment "BOOP" [AssignTyped (CustomT "opencl_memblock") (Var name) (Just $ Var "ctx.EMPTY_MEMBLOCK")]
+  AssignTyped (CustomT "opencl_memblock") (Var name) (Just $ Var "ctx.EMPTY_MEMBLOCK")
 
 rawMemCSType :: Space -> CSType
 rawMemCSType DefaultSpace = Composite $ ArrayT $ Primitive ByteT
