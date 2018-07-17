@@ -349,31 +349,32 @@ copyOpenCLMemory _ _ destspace _ _ srcspace _ _=
 
 staticOpenCLArray :: CS.StaticArray Imp.OpenCL ()
 staticOpenCLArray name "device" t vs = do
-  mapM_ CS.atInit <=< CS.collect $ do
+  --mapM_ CS.atInit <=< CS.collect $ do
     -- Create host-side C# array with intended values.
-    tmp_arr <- newVName' "tmp_arr"
-    CS.stm $ Assign (Var tmp_arr) $
-      CreateArray (CS.compilePrimTypeToAST t) $ map CS.compilePrimValue vs
+  tmp_arr <- newVName' "tmp_arr"
+  CS.stm $ Assign (Var tmp_arr) $
+    CreateArray (CS.compilePrimTypeToAST t) $ map CS.compilePrimValue vs
 
-    -- Create memory block on the device.
-    static_mem <- newVName "static_mem"
-    ptr <- newVName' "ptr"
-    let size = Integer $ genericLength vs * Imp.primByteSize t
-    allocateOpenCLBuffer static_mem size "device"
+  -- Create memory block on the device.
+  static_mem <- newVName "static_mem"
+  ptr <- newVName' "ptr"
+  let size = Integer $ genericLength vs * Imp.primByteSize t
+  CS.stm $ AssignTyped (CustomT "opencl_memblock") (Var $ CS.compileName static_mem) (Just $ Var "ctx.EMPTY_MEMBLOCK")
+  allocateOpenCLBuffer static_mem size "device"
 
-    -- Copy Numpy array to the device memory block.
-    CS.stm $ comment "staticarray"
-    CS.stm $ Fixed (CS.assignArrayPointer (Var tmp_arr) (Var ptr))
+  -- Copy Numpy array to the device memory block.
+  CS.stm $ comment "staticarray"
+  CS.stm $ Unsafe [
+    Fixed (CS.assignArrayPointer (Var tmp_arr) (Var ptr))
       [ ifNotZeroSize size $
-          Exp $ CS.simpleCall "CL10.EnqueueWriteBuffer"
+        Exp $ CS.simpleCall "CL10.EnqueueWriteBuffer"
           [ Var "ctx.opencl.queue", memblockFromMem static_mem, Var "synchronous"
           , CS.toIntPtr (Integer 0),CS.toIntPtr size
-          , Var ptr, Integer 0, Null, Null ]
-
-                                                  ]
-    -- Store the memory block for later reference.
-    CS.stm $ Assign (Var name') $ Var $ CS.compileName static_mem
-
+          , CS.toIntPtr $ Var ptr, Integer 0, Null, Null ]
+      ]
+    ]
+  -- Store the memory block for later reference.
+  CS.stm $ Assign (Var name') $ Var $ CS.compileName static_mem
   CS.stm $ Reassign (Var name') (Var name')
   where name' = CS.compileName name
 staticOpenCLArray _ space _ _ =
