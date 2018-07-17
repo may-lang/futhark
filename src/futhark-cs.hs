@@ -27,7 +27,7 @@ main = compilerMain () []
            let cspath = outpath `addExtension` "cs"
            liftIO $ writeFile cspath csprog
 
-           mono_libs <- liftIO $ getEnv "MONO_LIBS"
+           mono_libs <- liftIO $ getEnv "MONO_PATH"
            case mode of
              ToLibrary -> do
                let dllpath = outpath `addExtension` "dll"
