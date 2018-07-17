@@ -385,6 +385,7 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
                  , Using Nothing "System.Collections.Generic"
                  , Using Nothing "System.IO"
                  , Using Nothing "System.Linq"
+                 , Using Nothing "System.Runtime.InteropServices"
                  , Using Nothing "static System.ValueTuple"
                  , Using Nothing "static System.Convert"
                  , Using Nothing "static System.Math"
@@ -686,6 +687,20 @@ readFun (IntType Int64) Imp.TypeDirect   = "read_i64"
 readFun Imp.Bool _      = "read_bool"
 readFun Cert _          = error "readFun: cert"
 
+readBinFun :: PrimType -> Imp.Signedness -> String
+readBinFun (FloatType Float32) _bin_ = "read_bin_f32"
+readBinFun (FloatType Float64) _bin_ = "read_bin_f64"
+readBinFun (IntType Int8)  Imp.TypeUnsigned = "read_bin_u8"
+readBinFun (IntType Int16) Imp.TypeUnsigned = "read_bin_u16"
+readBinFun (IntType Int32) Imp.TypeUnsigned = "read_bin_u32"
+readBinFun (IntType Int64) Imp.TypeUnsigned = "read_bin_u64"
+readBinFun (IntType Int8)  Imp.TypeDirect   = "read_bin_i8"
+readBinFun (IntType Int16) Imp.TypeDirect   = "read_bin_i16"
+readBinFun (IntType Int32) Imp.TypeDirect   = "read_bin_i32"
+readBinFun (IntType Int64) Imp.TypeDirect   = "read_bin_i64"
+readBinFun Imp.Bool _      = "read_bin_bool"
+readBinFun Cert _          = error "readFun: cert"
+
 -- The value returned will be used when reading binary arrays, to indicate what
 -- the expected type is
 -- Key into the FUTHARK_PRIMTYPES dict.
@@ -708,8 +723,12 @@ readInput (Imp.OpaqueValue desc _) =
   Throw $ simpleInitClass "Exception" [String $ "Cannot read argument of type " ++ desc ++ "."]
 
 readInput decl@(Imp.TransparentValue (Imp.ScalarValue bt ept _)) =
-  let reader' = readFun bt ept
-  in Assign (Var $ extValueDescName decl) $ simpleCall reader' []
+  let read_func =  Var $ readFun bt ept
+      read_bin_func =  Var $ readBinFun bt ept
+      type_enum = String $ readTypeEnum bt ept
+      bt' =  compilePrimTypeExt bt ept
+      readScalar = initializeGenericFunction "ReadScalar" bt'
+  in Assign (Var $ extValueDescName decl) $ simpleCall readScalar [type_enum, read_func, read_bin_func]
 
 -- TODO: If the type identifier of 'Float32' is changed, currently the error
 -- messages for reading binary input will not use this new name. This is also a
@@ -719,8 +738,8 @@ readInput decl@(Imp.TransparentValue (Imp.ArrayValue _ _ _ bt ept dims)) =
       type_enum = String $ readTypeEnum bt ept
       bt' =  compilePrimTypeExt bt ept
       read_func =  Var $ readFun bt ept
-      readStrArray = initializeGenericFunction "ReadStrArray" bt'
-  in Assign (Var $ extValueDescName decl) $ simpleCall readStrArray [rank', type_enum, read_func]
+      readArray = initializeGenericFunction "ReadArray" bt'
+  in Assign (Var $ extValueDescName decl) $ simpleCall readArray [rank', type_enum, read_func]
 
 initializeGenericFunction :: String -> String -> String
 initializeGenericFunction fun tp = fun ++ "<" ++ tp ++ ">"

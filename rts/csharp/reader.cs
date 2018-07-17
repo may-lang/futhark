@@ -1,4 +1,5 @@
     private Stream s;
+    private BinaryReader b;
 
     // Note that the lookahead buffer does not interact well with
     // binary reading.  We are careful to not let this become a
@@ -17,6 +18,7 @@
     public void ValueReader()
     {
         this.s = Console.OpenStandardInput();
+        this.b = new BinaryReader(s);
     }
 
     private char? GetChar()
@@ -272,6 +274,17 @@
     int ReadStrU16(){return ReadStrInt("u16");}
     int ReadStrU32(){return ReadStrInt("u32");}
     int ReadStrU64(){return ReadStrInt("u64");}
+    sbyte ReadBinI8(){return (sbyte) s.ReadByte();}
+    short ReadBinI16(){return b.ReadInt16();}
+    int ReadBinI32(){return b.ReadInt32();}
+    long ReadBinI64(){return b.ReadInt64();}
+    byte ReadBinU8(){return (byte) s.ReadByte();}
+    ushort ReadBinU16(){return b.ReadUInt16();}
+    uint ReadBinU32(){return b.ReadUInt32();}
+    ulong ReadBinU64(){return b.ReadUInt64();}
+    float ReadBinF32(){return b.ReadSingle();}
+    double ReadBinF64(){return b.ReadDouble();}
+    bool ReadBinBool(){return b.ReadBoolean();}
 
     char ReadChar()
     {
@@ -511,6 +524,186 @@
         return ReadStrArrayElems(rank, ReadStrScalar);
     }
 
+    Dictionary<string, string> primtypes = new Dictionary<string, string>
+    {
+        {"  i8",   "i8"},
+        {" i16",  "i16"},
+        {" i32",  "i32"},
+        {" i64",  "i64"},
+        {"  u8",   "u8"},
+        {" u16",  "u16"},
+        {" u32",  "u32"},
+        {" u64",  "u64"},
+        {" f32",  "f32"},
+        {" f64",  "f64"},
+        {"bool", "bool"}
+    };
+
+        private int BINARY_FORMAT_VERSION = 2;
+
+
+    public void read_le_2byte(ref short dest)
+    {
+        dest = b.ReadInt16();
+    }
+    
+    public void read_le_4byte(ref int dest)
+    {
+        dest = b.ReadInt32();
+    }
+    
+    public void read_le_8byte(ref long dest)
+    {
+        dest = b.ReadInt64();
+    }
+
+    public bool ReadIsBinary()
+        {
+            SkipSpaces();
+            var c = GetChar();
+            if (c == 'b')
+            {
+                byte bin_version = new byte();
+                try
+                {
+                    bin_version = (byte) s.ReadByte();
+                }
+                catch
+                {
+                    Console.WriteLine("binary-input: could not read version");
+                    Environment.Exit(1);
+                }
+
+                if (bin_version != BINARY_FORMAT_VERSION)
+                {
+                    Console.WriteLine((
+                        "binary-input: File uses version {0}, but I only understand version {1}.", bin_version,
+                        BINARY_FORMAT_VERSION));
+                    Environment.Exit(1);
+                }
+
+                return true;
+            }
+            UngetChar((char) c);
+            return false;
+        }
+
+    public (T[], int[]) ReadArray<T>(int rank, string typeName, Func<T> ReadStrScalar)
+    {
+        if (!ReadIsBinary())
+        {
+            return ReadStrArray<T>(rank, typeName, ReadStrScalar);
+        }
+        else
+        {
+            return ReadBinArray<T>(rank, typeName, ReadStrScalar);
+        }
+    }
+    public T ReadScalar<T>(string typeName, Func<T> ReadStrScalar, Func<T> ReadBinScalar)
+    {
+        if (!ReadIsBinary())
+        {
+            return ReadStrScalar();
+        }
+        else
+        {
+            ReadBinEnsureScalar(typeName);
+            return ReadBinScalar();
+        }
+    }
+
+    void ReadBinEnsureScalar(string typeName)
+    {
+        var bin_dims = s.ReadByte();
+        if (bin_dims != 0)
+        {
+            Console.WriteLine("binary-input: Expected scalar (0 dimensions), but got array with {0} dimensions.", bin_dims);
+            Environment.Exit(1);
+        }
+
+        var bin_type = ReadBinReadTypeString();
+        if (bin_type != typeName)
+        {
+            Console.WriteLine("binary-input: Expected scalar of type {0} but got scalar of type {1}.", typeName,
+                              bin_type);
+            Environment.Exit(1);
+        }
+    }
+    public string ReadBinReadTypeString()
+    {
+        var str_bytes = b.ReadBytes(4);
+        var str = System.Text.Encoding.UTF8.GetString(str_bytes, 0, 4);
+        return primtypes[str];
+    }
+
+    public (T[], int[]) ReadBinArray<T>(int rank, string typeName, Func<T> ReadStrScalar)
+    {
+        var bin_dims = new int();
+        var shape = new int[rank];
+        try
+        {
+            bin_dims = s.ReadByte();
+        }
+        catch
+        {
+            Console.WriteLine("binary-input: Couldn't get dims.");
+            Environment.Exit(1);
+        }
+
+        if (bin_dims != rank)
+        {
+            Console.WriteLine("binary-input: Expected {0} dimensions, but got array with {1} dimensions", rank,
+                bin_dims);
+            Environment.Exit(1);
+
+        }
+
+        var bin_primtype = ReadBinReadTypeString();
+        if (typeName != bin_primtype)
+        {
+            Console.WriteLine("binary-input: Expected {0}D-array with element type '{1}', but got {2}D-array with element type '{3}'.",
+                              rank, typeName, bin_dims, bin_primtype);
+            Environment.Exit(1);
+        }
+
+        int elem_count = 1;
+        for (var i = 0; i < rank; i++)
+        {
+            long bin_shape = new long();
+            try
+            {
+                read_le_8byte(ref bin_shape);
+            }
+            catch
+            {
+                Console.WriteLine("binary-input: Couldn't read size for dimension {0} of array.", i);
+                Environment.Exit(1);
+            }
+            
+            elem_count *= (int) bin_shape;
+            shape[i] = (int) bin_shape;
+        }
+
+        var elem_size = Marshal.SizeOf(typeof(T));
+        var num_bytes = elem_count * elem_size;
+        var tmp = new byte[num_bytes];
+        var data = new T[elem_count];
+        s.Read(tmp, 0, num_bytes);
+
+        if (!BitConverter.IsLittleEndian && elem_size != 1)
+        {
+            for (int i = 0; i < elem_count; i ++)
+            {
+                Array.Reverse(tmp, i * elem_size, elem_size); 
+            }
+        }
+        Buffer.BlockCopy(tmp,0,data,0,num_bytes);
+
+        /* we should have a proper error message here */
+        return (data, shape);
+    }
+
+
     public sbyte read_i8()
     {
         return (sbyte) ReadStrI8();
@@ -557,4 +750,48 @@
     public double read_f64()
     {
         return ReadStrDecimal();
+    }
+    public sbyte read_bin_i8()
+    {
+        return (sbyte) ReadBinI8();
+    }
+    public short read_bin_i16()
+    {
+        return (short) ReadBinI16();
+    }
+    public int read_bin_i32()
+    {
+        return ReadBinI32();
+    }
+    public long read_bin_i64()
+    {
+        return ReadBinI64();
+    }
+    public byte read_bin_u8()
+    {
+        return (byte) ReadBinU8();
+    }
+    public ushort read_bin_u16()
+    {
+        return (ushort) ReadBinU16();
+    }
+    public uint read_bin_u32()
+    {
+        return (uint) ReadBinU32();
+    }
+    public ulong read_bin_u64()
+    {
+        return (ulong) ReadBinU64();
+    }
+    public bool read_bin_bool()
+    {
+        return ReadBinBool();
+    }
+    public float read_bin_f32()
+    {
+        return ReadBinF32();
+    }
+    public double read_bin_f64()
+    {
+        return ReadBinF64();
     }
