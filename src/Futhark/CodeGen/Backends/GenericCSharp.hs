@@ -1267,13 +1267,9 @@ compileCode (Imp.Allocate name (Imp.Count e) (Imp.Space space)) = do
     <*> compileExp e
     <*> pure space
 
-compileCode (Imp.Free _ _) = stm Pass
-{-*
 compileCode (Imp.Free name space) = do
   unRefMem name space
   tell $ mempty { accFreedMem = [name] }
- *-}
-
 
 compileCode (Imp.Copy dest (Imp.Count destoffset) DefaultSpace src (Imp.Count srcoffset) DefaultSpace (Imp.Count size)) = do
   destoffset' <- compileExp destoffset
