@@ -24,6 +24,11 @@ static short sub16(short x, short y){ return Convert.ToInt16(x - y); }
 static int sub32(int x, int y){ return x - y; }
 static long sub64(long x, long y){ return x - y;}
 
+static sbyte mul8(sbyte x, sbyte y){ return Convert.ToSByte(x * y); }
+static short mul16(short x, short y){ return Convert.ToInt16(x * y); }
+static int mul32(int x, int y){ return x * y; }
+static long mul64(long x, long y){ return x * y; }
+
 static sbyte or8(sbyte x, sbyte y){ return Convert.ToSByte(x | y); }
 static short or16(short x, short y){ return Convert.ToInt16(x | y); }
 static int or32(int x, int y){ return x | y; }
@@ -32,12 +37,12 @@ static long or64(long x, long y){ return x | y;}
 static sbyte shl8(sbyte x, sbyte y){ return Convert.ToSByte(x << y); }
 static short shl16(short x, short y){ return Convert.ToInt16(x << y); }
 static int shl32(int x, int y){ return x << y; }
-static long shl64(long x, long y){ return x << y; }
+static long shl64(long x, long y){ return x << Convert.ToInt32(y); }
 
 static sbyte ashr8(sbyte x, sbyte y){ return Convert.ToSByte(x >> y); }
 static short ashr16(short x, short y){ return Convert.ToInt16(x >> y); }
 static int ashr32(int x, int y){ return x >> y; }
-static long ashr64(long x, long y){ return x >> y; }
+static long ashr64(long x, long y){ return x >> Convert.ToInt32(y); }
 
 static sbyte sdiv8(sbyte x, sbyte y){ return Convert.ToSByte(x / y); }
 static short sdiv16(short x, short y){ return Convert.ToInt16(x / y); }

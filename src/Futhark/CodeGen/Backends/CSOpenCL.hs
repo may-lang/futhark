@@ -221,18 +221,24 @@ launchKernel kernel_name kernel_dims workgroup_dims args = do
           let t = CS.compilePrimTypeToAST bt
           tmp <- newVName' "kernel_arg"
           e' <- CS.compileExp e
+          err <- newVName' "setarg_err"
+          let err_var = Var err
           return [ AssignTyped t (Var tmp) (Just e')
                  , Comment "ValueKArg" []
-                 , Exp $ getKernelCall kernel argnum (CS.sizeOf t) (Var tmp)]
+                 , Assign err_var $ getKernelCall kernel argnum (CS.sizeOf t) (Var tmp)]
 
-        processKernelArg kernel argnum (Imp.MemKArg v) =
+        processKernelArg kernel argnum (Imp.MemKArg v) = do
+          err <- newVName' "setarg_err"
+          let err_var = Var err
           return [ Comment "MemKArg" []
-                 , Exp $ getKernelCall kernel argnum (CS.sizeOf $ Primitive IntPtrT) (memblockFromMem v)]
+                 , Assign err_var $ getKernelCall kernel argnum (CS.sizeOf $ Primitive IntPtrT) (memblockFromMem v)]
 
         processKernelArg kernel argnum (Imp.SharedMemoryKArg (Imp.Count num_bytes)) = do
+          err <- newVName' "setarg_err"
+          let err_var = Var err
           num_bytes' <- CS.compileExp num_bytes
           return [ Comment "SharedMemoryKArg" []
-                 , Exp $ getKernelCall kernel argnum num_bytes' Null ]
+                 , Assign err_var $ getKernelCall kernel argnum num_bytes' Null ]
 
         kernel_rank = toInteger $ length kernel_dims
         total_elements = foldl (BinOp "*") (Integer 1) kernel_dims

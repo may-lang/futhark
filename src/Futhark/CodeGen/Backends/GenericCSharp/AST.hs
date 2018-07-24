@@ -239,6 +239,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | StaticFunDef CSFunDef
             | PublicFunDef CSFunDef
             | FunDef CSFunDef
+            | Namespace String [CSStmt]
             | ClassDef CSClassDef
             | ConstructorDef CSConstructorDef
             | StructDef String [(CSType, String)]
@@ -351,6 +352,8 @@ instance Pretty CSStmt where
 
   ppr (StructDef name assignments) = text "public struct" <+> text name <> braces(stack $ map (\(tp,field) -> text "public" <+> ppr tp <+> text field <> semi) assignments)
 
+  ppr (Namespace name csstms) = text "namespace" <+> text name <> braces(stack $ map ppr csstms)
+
   ppr (CSDecl decl) = text $ show decl
 
   ppr (Escape s) = stack $ map text $ lines s
@@ -368,6 +371,12 @@ instance Pretty CSFunDef where
 instance Pretty CSClassDef where
   ppr (Class cname body) =
     text "class" <+> text cname </>
+    lbrace </>
+    indent 4 (stack (map ppr body)) </>
+    rbrace
+
+  ppr (PublicClass cname body) =
+    text "public" <+> text "class" <+> text cname </>
     lbrace </>
     indent 4 (stack (map ppr body)) </>
     rbrace
@@ -395,6 +404,7 @@ data CSFunDef = Def String CSType [CSFunDefArg] [CSStmt]
                   deriving (Eq, Show)
 
 data CSClassDef = Class String [CSStmt]
+                | PublicClass String [CSStmt]
                 deriving (Eq, Show)
 
 data CSConstructorDef = ClassConstructor String [CSFunDefArg] [CSStmt]

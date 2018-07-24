@@ -179,7 +179,7 @@ ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, str
 {
     long size = 0;
     CLMemoryHandle existing_mem = ctx.EMPTY_MEM_HANDLE;
-    ComputeErrorCode error;
+    ComputeErrorCode error = ComputeErrorCode.Success;
     if (free_list_find(ref context.free_list, tag, ref size, ref existing_mem))
     {
         error = CL10.ReleaseMemObject(existing_mem);
@@ -189,14 +189,18 @@ ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, str
         }
     }
 
+
+    /*
+    var trash_null = new IntPtr();
     error = CL10.GetMemObjectInfo(mem, ComputeMemoryInfo.Size,
-                                  new IntPtr(sizeof(long)), new IntPtr(size), out context.NULL);
+                                  new IntPtr(sizeof(long)), new IntPtr(size), out trash_null);
 
     if (error == ComputeErrorCode.Success)
     {
         free_list_insert(ref context, size, mem, tag);
     }
-
+    */
+    free_list_insert(ref context, size, mem, tag);
     return error;
 }
 

@@ -409,9 +409,9 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
             Just name -> do
               entry_points <- mapM compileEntryFun $ filter (Imp.functionEntry . snd) funs
               let constructor' = constructorToConstructorDef constructor name at_inits'
-              return [ClassDef $ Class name $ member_decls' ++
+              return [Namespace name [ClassDef $ PublicClass name $ member_decls' ++
                       constructor' : defines' ++ opencl_boilerplate ++
-                      map PublicFunDef (definitions ++ entry_points)]
+                      map PublicFunDef (definitions ++ entry_points)]]
 
 
             Nothing -> do
@@ -422,8 +422,8 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
                 (filter (Imp.functionEntry . snd) funs)
 
               debug_ending <- gets compDebugItems
-              return ((ClassDef $
-                       Class name $
+              return [Namespace name ((ClassDef $
+                       PublicClass name $
                          member_decls' ++
                          constructor' : defines' ++
                          opencl_boilerplate ++
@@ -431,8 +431,9 @@ compileProg module_name constructor imports defines ops userstate boilerplate pr
                          [PublicFunDef $ Def "internal_entry" VoidT [] $ selectEntryPoint entry_point_names entry_points ++ debug_ending
                          ]
                       ) :
-                     [ClassDef $ Class "Program"
+                     [ClassDef $ PublicClass "Program"
                        [StaticFunDef $ Def "Main" VoidT [(string_arrayT,"args")] main_entry]])
+                     ]
 
 
 
@@ -1019,7 +1020,7 @@ compileBinOpLike x y = do
 compilePrimType :: PrimType -> String
 compilePrimType t =
   case t of
-    IntType Int8 -> "byte"
+    IntType Int8 -> "sbyte"
     IntType Int16 -> "short"
     IntType Int32 -> "int"
     IntType Int64 -> "long"
@@ -1062,7 +1063,7 @@ compileBitConverter t =
 compileTypeConverter :: PrimType -> String
 compileTypeConverter t =
   case t of
-    IntType Int8 -> "Convert.ToByte"
+    IntType Int8 -> "Convert.ToSByte"
     IntType Int16 -> "Convert.ToInt16"
     IntType Int32 -> "Convert.ToInt32"
     IntType Int64 -> "Convert.ToInt64"
@@ -1090,7 +1091,7 @@ compileTypeConverterExt t ept =
 
 compilePrimValue :: Imp.PrimValue -> CSExp
 compilePrimValue (IntValue (Int8Value v)) =
-  simpleCall "Convert.ToByte" [Integer $ toInteger v]
+  simpleCall "Convert.ToSByte" [Integer $ toInteger v]
 compilePrimValue (IntValue (Int16Value v)) =
   simpleCall "Convert.ToInt16" [Integer $ toInteger v]
 compilePrimValue (IntValue (Int32Value v)) =
@@ -1136,17 +1137,10 @@ compileExp (Imp.LeafExp (Imp.Index src (Imp.Count iexp) restype (Imp.Space space
 compileExp (Imp.BinOpExp op x y) = do
   (x', y', simple) <- compileBinOpLike x y
   case op of
-    Add{} -> simple "+"
-    Sub{} -> simple "-"
-    Mul{} -> simple "*"
     FAdd{} -> simple "+"
     FSub{} -> simple "-"
     FMul{} -> simple "*"
     FDiv{} -> simple "/"
-    Xor{} -> simple "^"
-    And{} -> simple "&"
-    Or{} -> simple "|"
-    Shl{} -> simple "<<"
     LogAnd{} -> simple "&&"
     LogOr{} -> simple "||"
     _ -> return $ simpleCall (pretty op) [x', y']
