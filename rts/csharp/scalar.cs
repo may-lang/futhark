@@ -34,6 +34,16 @@ static short or16(short x, short y){ return Convert.ToInt16(x | y); }
 static int or32(int x, int y){ return x | y; }
 static long or64(long x, long y){ return x | y;}
 
+static sbyte xor8(sbyte x, sbyte y){ return Convert.ToSByte(x ^ y); }
+static short xor16(short x, short y){ return Convert.ToInt16(x ^ y); }
+static int xor32(int x, int y){ return x ^ y; }
+static long xor64(long x, long y){ return x ^ y;}
+
+static sbyte and8(sbyte x, sbyte y){ return Convert.ToSByte(x & y); }
+static short and16(short x, short y){ return Convert.ToInt16(x & y); }
+static int and32(int x, int y){ return x & y; }
+static long and64(long x, long y){ return x & y;}
+
 static sbyte shl8(sbyte x, sbyte y){ return Convert.ToSByte(x << y); }
 static short shl16(short x, short y){ return Convert.ToInt16(x << y); }
 static int shl32(int x, int y){ return x << y; }
@@ -266,4 +276,7 @@ static bool futhark_isnan32(float x){return float.IsNaN(x);}
 static bool futhark_isinf32(float x){return float.IsInfinity(x);}
 static int futhark_to_bits32(float x){return BitConverter.ToInt32(BitConverter.GetBytes(x), 0);}
 static float futhark_from_bits32(int x){return BitConverter.ToSingle(BitConverter.GetBytes(x), 0);}
+
+static float futhark_round32(float x){return (float) Math.Round(x);}
+static double futhark_round64(double x){return Math.Round(x);}
 
