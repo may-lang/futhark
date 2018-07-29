@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [0.7.0]
+
+### Added
+
+  * Added `log2` and `log10` functions to `f32` and `f64`.
+
+  * Module type refinement (`with`) now permits refining parametric
+    types.
+
+  * Better error message when invalid values are passed to generated
+    Python entry points.
+
+  * `futhark-doc` now ignores files whose doc comment is the word
+    "ignore".
+
+### Removed
+
+### Changed
+
+### Fixed
+
+  * Floating-point numbers are now correctly rounded to nearest even
+    integer, even in exotic cases (#377).
+
+  * Fixed a nasty bug in the type checking of calls to consuming
+    functions (#596).
+
+## [0.6.2]
+
+### Added
+
+  * Bounds checking errors now show the erroneous index and the size
+    of the indexed array.  Some other size-related errors also show
+    more information, but it will be a while before they are all
+    converted (and say something useful - it's not entirely
+    straightforward).
+
+  * Opaque types now have significantly more readable names,
+    especially if you add manual size annotations to the entry point
+    definitions.
+
+  * Backticked infix operators can now be used in operator sections.
+
+### Fixed
+
+  * `f64.e` is no longer pi.
+
+  * Generated C library code will no longer `abort()` on application
+    errors (#584).
+
+  * Fix file imports on Windows.
+
+  * `futhark-c` and `futhark-opencl` now generates thread-safe code (#586).
+
+  * Significantly better behaviour in OOM situations.
+
+  * Fixed an unsound interaction between in-place updates and
+    parametric polymorphism (#589).
+
 ## [0.6.1]
 
 ### Added

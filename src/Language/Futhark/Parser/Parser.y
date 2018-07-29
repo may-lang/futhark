@@ -223,7 +223,8 @@ SigExp :: { UncheckedSigExp }
         | SigExp '->' SigExp  { SigArrow Nothing $1 $3 (srcspan $1 $>) }
 
 TypeRef :: { TypeRefBase NoInfo Name }
-         : QualName '=' TypeExpTerm { TypeRef (fst $1) (TypeDecl $3 NoInfo) (srcspan (snd $1) $>) }
+         : QualName TypeParams '=' TypeExpTerm
+           { TypeRef (fst $1) $2 (TypeDecl $4 NoInfo) (srcspan (snd $1) $>) }
 
 SigBind :: { SigBindBase NoInfo Name }
          : module type id '=' SigExp
@@ -323,7 +324,8 @@ UnOp :: { (QualName Name, SrcLoc) }
       : qunop { let L loc (QUALUNOP qs v) = $1 in (QualName qs v, loc) }
       | unop  { let L loc (UNOP v) = $1 in (qualName v, loc) }
 
--- Note that this production does not include Minus.
+-- Note that this production does not include Minus, but does include
+-- operator sections.
 BinOp :: { QualName Name }
       : '+...'     { binOpName $1 }
       | '-...'     { binOpName $1 }
@@ -352,6 +354,7 @@ BinOp :: { QualName Name }
       | '<|...'    { binOpName $1 }
       | '|>...'    { binOpName $1 }
       | '<'        { qualName (nameFromString "<") }
+      | '`' QualName '`' { fst $2 }
 
 BindingUnOp :: { Name }
       : UnOp {% let (QualName qs name, _) = $1 in do

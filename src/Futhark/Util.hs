@@ -23,6 +23,11 @@ module Futhark.Util
         isEnvVarSet,
         runProgramWithExitCode,
         directoryContents,
+        roundFloat,
+        roundDouble,
+        fromPOSIX,
+        toPOSIX,
+        trim,
         zEncodeString
        )
        where
@@ -38,6 +43,8 @@ import System.IO.Unsafe
 import qualified System.Directory.Tree as Dir
 import System.Process
 import System.Exit
+import qualified System.FilePath.Posix as Posix
+import qualified System.FilePath as Native
 
 -- | Like 'mapAccumL', but monadic.
 mapAccumLM :: Monad m =>
@@ -147,6 +154,32 @@ directoryContents dir = do
     _ -> return $ mapMaybe isFile $ Dir.flattenDir tree
   where isFile (Dir.File _ path) = Just path
         isFile _                 = Nothing
+
+foreign import ccall "nearbyint" c_nearbyint :: Double -> Double
+foreign import ccall "nearbyintf" c_nearbyintf :: Float -> Float
+
+-- | Round a single-precision floating point number correctly.
+roundFloat :: Float -> Float
+roundFloat = c_nearbyintf
+
+-- | Round a double-precision floating point number correctly.
+roundDouble :: Double -> Double
+roundDouble = c_nearbyint
+
+-- | Turn a POSIX filepath into a filepath for the native system.
+toPOSIX :: Native.FilePath -> Posix.FilePath
+toPOSIX = Posix.joinPath . Native.splitDirectories
+
+-- | Some bad operating systems do not use forward slash as
+-- directory separator - this is where we convert Futhark includes
+-- (which always use forward slash) to native paths.
+fromPOSIX :: Posix.FilePath -> Native.FilePath
+fromPOSIX = Native.joinPath . Posix.splitDirectories
+
+-- | Remove leading and trailing whitespace from a string.  Not an
+-- efficient implementation!
+trim :: String -> String
+trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 -- Z-encoding from https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/SymbolNames
 --

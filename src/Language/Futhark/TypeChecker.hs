@@ -130,7 +130,7 @@ bindingTypeParams tparams = localEnv env
                      M.singleton v $ BoundV [] (Prim (Signed Int32)) }
         typeParamEnv (TypeParamType l v _) =
           mempty { envTypeTable =
-                     M.singleton v $ TypeAbbr l [] $ TypeVar (typeName v) [] }
+                     M.singleton v $ TypeAbbr l [] $ TypeVar () (typeName v) [] }
 
 checkSpecs :: [SpecBase NoInfo Name] -> TypeM (TySet, Env, [SpecBase Info VName])
 
@@ -178,7 +178,7 @@ checkSpecs (TypeSpec l name ps doc loc : specs) =
                    M.singleton (Type, name) $ qualName name'
                , envTypeTable =
                    M.singleton name' $ TypeAbbr l ps' $
-                   TypeVar (typeName name') $ map typeParamToArg ps'
+                   TypeVar () (typeName name') $ map typeParamToArg ps'
                }
     (abstypes, env, specs') <- localEnv tenv $ checkSpecs specs
     return (M.insert (qualName name') l abstypes,
@@ -224,11 +224,12 @@ checkSigExp (SigSpecs specs loc) = do
   checkForDuplicateSpecs specs
   (abstypes, env, specs') <- checkSpecs specs
   return (MTy abstypes $ ModEnv env, SigSpecs specs' loc)
-checkSigExp (SigWith s (TypeRef tname td trloc) loc) = do
+checkSigExp (SigWith s (TypeRef tname ps td trloc) loc) = do
   (s_abs, s_env, s') <- checkSigExpToEnv s
-  (td', _) <- checkTypeDecl td
-  (tname', s_abs', s_env') <- refineEnv loc s_abs s_env tname $ unInfo $ expandedType td'
-  return (MTy s_abs' $ ModEnv s_env', SigWith s' (TypeRef tname' td' trloc) loc)
+  checkTypeParams ps $ \ps' -> do
+    (td', _) <- bindingTypeParams ps' $ checkTypeDecl td
+    (tname', s_abs', s_env') <- refineEnv loc s_abs s_env tname ps' $ unInfo $ expandedType td'
+    return (MTy s_abs' $ ModEnv s_env', SigWith s' (TypeRef tname' ps' td' trloc) loc)
 checkSigExp (SigArrow maybe_pname e1 e2 loc) = do
   (MTy s_abs e1_mod, e1') <- checkSigExp e1
   (env_for_e2, maybe_pname') <-
@@ -428,7 +429,6 @@ checkTypeBind (TypeBind name ps td doc loc) =
 checkValBind :: ValBindBase NoInfo Name -> TypeM (Env, ValBind)
 checkValBind (ValBind entry fname maybe_tdecl NoInfo tparams params body doc loc) = do
   (fname', tparams', params', maybe_tdecl', rettype, body') <-
-    bindSpaced [(Term, fname)] $
     checkFunDef (fname, maybe_tdecl, tparams, params, body, loc)
 
   when (entry && any isTypeParam tparams') $
@@ -606,9 +606,9 @@ matchMTys = matchMTys' mempty
               matchTypeParam (TypeParamDim x _) (TypeParamDim y _) =
                 pure $ M.singleton x $ DimSub $ NamedDim $ qualName y
               matchTypeParam (TypeParamType Unlifted x _) (TypeParamType Unlifted y _) =
-                pure $ M.singleton x $ TypeSub $ TypeAbbr Unlifted [] $ TypeVar (typeName y) []
+                pure $ M.singleton x $ TypeSub $ TypeAbbr Unlifted [] $ TypeVar () (typeName y) []
               matchTypeParam (TypeParamType _ x _) (TypeParamType Lifted y _) =
-                pure $ M.singleton x $ TypeSub $ TypeAbbr Lifted [] $ TypeVar (typeName y) []
+                pure $ M.singleton x $ TypeSub $ TypeAbbr Lifted [] $ TypeVar () (typeName y) []
               matchTypeParam _ _ =
                 nomatch
 
@@ -696,7 +696,7 @@ matchMTys = matchMTys' mempty
     ppTypeAbbr abs name (ps, t) =
       "type " ++ unwords (pretty name : map pretty ps) ++ t'
       where t' = case t of
-                   TypeVar tn args
+                   TypeVar () tn args
                      | typeLeaf tn `elem` abs,
                        map typeParamToArg ps == args -> ""
                    _ -> " = " ++ pretty t
@@ -723,7 +723,7 @@ typeParamToArg :: TypeParam -> StructTypeArg
 typeParamToArg (TypeParamDim v ploc) =
   TypeArgDim (NamedDim $ qualName v) ploc
 typeParamToArg (TypeParamType _ v ploc) =
-  TypeArgType (TypeVar (typeName v) []) ploc
+  TypeArgType (TypeVar () (typeName v) []) ploc
 
 substituteTypesInMod :: TypeSubs -> Mod -> Mod
 substituteTypesInMod substs (ModEnv e) =
@@ -819,8 +819,8 @@ newNamesForMTy orig_mty = do
           TypeParamType l (substitute p) loc
 
         substituteInType :: StructType -> StructType
-        substituteInType (TypeVar (TypeName qs v) targs) =
-          TypeVar (TypeName (map substitute qs) $ substitute v) $ map substituteInTypeArg targs
+        substituteInType (TypeVar () (TypeName qs v) targs) =
+          TypeVar () (TypeName (map substitute qs) $ substitute v) $ map substituteInTypeArg targs
         substituteInType (Prim t) =
           Prim t
         substituteInType (Record ts) =
@@ -870,19 +870,30 @@ envTypeAbbrs env =
   (mconcat . map modTypeAbbrs . M.elems . envModTable) env
 
 -- | Refine the given type name in the given env.
-refineEnv :: SrcLoc -> TySet -> Env -> QualName Name -> StructType
+refineEnv :: SrcLoc -> TySet -> Env -> QualName Name -> [TypeParam] -> StructType
           -> TypeM (QualName VName, TySet, Env)
-refineEnv loc tset env tname t
-  | Just (tname', TypeAbbr l [] (TypeVar (TypeName qs v) _)) <-
+refineEnv loc tset env tname ps t
+  | Just (tname', TypeAbbr l cur_ps (TypeVar () (TypeName qs v) _)) <-
       findTypeDef tname (ModEnv env),
     QualName (qualQuals tname') v `M.member` tset =
-      return (tname',
-              QualName qs v `M.delete` tset,
-              substituteTypesInEnv
-               (M.fromList [(qualLeaf tname',
-                             TypeSub $ TypeAbbr l [] t),
-                             (v, TypeSub $ TypeAbbr l [] t)])
-              env)
+      if paramsMatch cur_ps ps then
+        return (tname',
+                QualName qs v `M.delete` tset,
+                substituteTypesInEnv
+                (M.fromList [(qualLeaf tname',
+                              TypeSub $ TypeAbbr l cur_ps t),
+                              (v, TypeSub $ TypeAbbr l ps t)])
+                env)
+      else throwError $ TypeError loc $ "Cannot refine a type having " <>
+           tpMsg ps <> " with a type having " <> tpMsg cur_ps <> "."
   | otherwise =
       throwError $ TypeError loc $
       pretty tname ++ " is not an abstract type in the module type."
+  where tpMsg [] = "no type parameters"
+        tpMsg xs = "type parameters " <> unwords (map pretty xs)
+
+paramsMatch :: [TypeParam] -> [TypeParam] -> Bool
+paramsMatch ps1 ps2 = length ps1 == length ps2 && all match (zip ps1 ps2)
+  where match (TypeParamType l1 _ _, TypeParamType l2 _ _) = l1 <= l2
+        match (TypeParamDim _ _, TypeParamDim _ _) = True
+        match _ = False

@@ -125,8 +125,8 @@ instance Pretty (ShapeDecl dim) => Pretty (ArrayElemTypeBase dim as) where
 
 instance Pretty (ShapeDecl dim) => Pretty (TypeBase dim as) where
   ppr (Prim et) = ppr et
-  ppr (TypeVar et targs) = ppr (qualNameFromTypeName et) <+>
-                           spread (map ppr targs)
+  ppr (TypeVar _ et targs) =
+    ppr (qualNameFromTypeName et) <+> spread (map ppr targs)
   ppr (Array at shape u) = ppr u <> ppr shape <> ppr at
   ppr (Record fs)
     | Just ts <- areTupleFields fs =
@@ -204,8 +204,6 @@ instance (Eq vn, IsName vn, Annot f) => Pretty (ExpBase f vn) where
     | otherwise                     = braces $ commasep $ map ppr fs
     where fieldArray (RecordFieldExplicit _ e _) = hasArrayLit e
           fieldArray RecordFieldImplicit{} = False
-  pprPrec _ (Empty (TypeDecl t _) _ _) =
-    text "empty" <> parens (ppr t)
   pprPrec _ (ArrayLit es _ _) =
     brackets $ commasep $ map ppr es
   pprPrec p (Range start maybe_step end _ _) =
@@ -397,8 +395,8 @@ instance (Eq vn, IsName vn, Annot f) => Pretty (SigExpBase f vn) where
   ppr (SigVar v _) = ppr v
   ppr (SigParens e _) = parens $ ppr e
   ppr (SigSpecs ss _) = nestedBlock "{" "}" (stack $ punctuate line $ map ppr ss)
-  ppr (SigWith s (TypeRef v td _) _) =
-    ppr s <+> text "with" <+> ppr v <> text " =" <+> ppr td
+  ppr (SigWith s (TypeRef v ps td _) _) =
+    ppr s <+> text "with" <+> ppr v <+> spread (map ppr ps) <> text " =" <+> ppr td
   ppr (SigArrow (Just v) e1 e2 _) =
     parens (pprName v <> colon <+> ppr e1) <+> text "->" <+> ppr e2
   ppr (SigArrow Nothing e1 e2 _) =

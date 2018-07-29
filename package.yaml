@@ -1,5 +1,5 @@
 name: futhark
-version: "0.6.0"
+version: "0.7.0"
 synopsis: An optimising compiler for a functional, array-oriented language.
 description: See the website at https://futhark-lang.org
 homepage: https://futhark-lang.org
@@ -30,7 +30,7 @@ dependencies:
   - srcloc >= 0.4
   - language-c-quote >= 0.12
   - mainland-pretty >= 0.6
-  - parsec >= 3
+  - megaparsec >= 6
   - regex-tdfa >= 1.2
   - filepath
   - dlist >= 0.6.0.1
@@ -51,6 +51,13 @@ dependencies:
   - process
   - markdown
   - zlib
+  - versions
+  - http-client
+  - http-client-tls
+  - http-conduit
+  - process-extras
+  - free
+  - zip-archive
 
 when:
 - condition: "!impl(ghc >= 8.0)"
@@ -75,7 +82,6 @@ executables:
       - futhark
       - process
       - random
-      - process-extras
       - temporary
       - json
     ghc-options: -threaded -rtsopts "-with-rtsopts=-N -qg"
@@ -115,6 +121,9 @@ executables:
   futhark-doc:
     <<: *futhark
     main: src/futhark-doc.hs
+  futhark-pkg:
+    <<: *futhark
+    main: src/futhark-pkg.hs
 
 tests:
   unit:
@@ -122,8 +131,8 @@ tests:
     main: futhark_tests.hs
     dependencies:
       - QuickCheck >= 2.8
-      - test-framework >= 0.4.0
-      - test-framework-quickcheck2
+      - tasty
+      - tasty-quickcheck
       - HUnit
-      - test-framework-hunit
+      - tasty-hunit
       - futhark

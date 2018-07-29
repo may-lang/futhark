@@ -676,6 +676,31 @@ static cl_program setup_opencl(struct opencl_context *ctx,
   return prog;
 }
 
+// Allocate memory from driver. The problem is that OpenCL may perform
+// lazy allocation, so we cannot know whether an allocation succeeded
+// until the first time we try to use it.  Hence we immediately
+// perform a write to see if the allocation succeeded.  This is slow,
+// but the assumption is that this operation will be rare (most things
+// will go through the free list).
+int opencl_alloc_actual(struct opencl_context *ctx, size_t size, cl_mem *mem_out) {
+  int error;
+  *mem_out = clCreateBuffer(ctx->ctx, CL_MEM_READ_WRITE, size, NULL, &error);
+
+  if (error != CL_SUCCESS) {
+    return error;
+  }
+
+  int x = 2;
+  error = clEnqueueWriteBuffer(ctx->queue, *mem_out, 1, 0, sizeof(x), &x, 0, NULL, NULL);
+
+  // No need to wait for completion here. clWaitForEvents() cannot
+  // return mem object allocation failures. This implies that the
+  // buffer is faulted onto the device on enqueue. (Observation by
+  // Andreas Kloeckner.)
+
+  return error;
+}
+
 int opencl_alloc(struct opencl_context *ctx, size_t min_size, const char *tag, cl_mem *mem_out) {
   assert(min_size >= 0);
   if (min_size < sizeof(int)) {
@@ -697,9 +722,29 @@ int opencl_alloc(struct opencl_context *ctx, size_t min_size, const char *tag, c
     }
   }
 
-  // We have to allocate a new block from the driver.
-  int error;
-  *mem_out = clCreateBuffer(ctx->ctx, CL_MEM_READ_WRITE, min_size, NULL, &error);
+  // We have to allocate a new block from the driver.  If the
+  // allocation does not succeed, then we might be in an out-of-memory
+  // situation.  We now start freeing things from the free list until
+  // we think we have freed enough that the allocation will succeed.
+  // Since we don't know how far the allocation is from fitting, we
+  // have to check after every deallocation.  This might be pretty
+  // expensive.  Let's hope that this case is hit rarely.
+
+  int error = opencl_alloc_actual(ctx, min_size, mem_out);
+
+  while (error == CL_MEM_OBJECT_ALLOCATION_FAILURE) {
+    cl_mem mem;
+    if (free_list_first(&ctx->free_list, &mem) == 0) {
+      error = clReleaseMemObject(mem);
+      if (error != CL_SUCCESS) {
+        return error;
+      }
+    } else {
+      break;
+    }
+    error = opencl_alloc_actual(ctx, min_size, mem_out);
+  }
+
   return error;
 }
 
