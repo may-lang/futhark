@@ -141,7 +141,42 @@ bool free_list_find(ref opencl_free_list free_list, string tag, ref long size_ou
     return false;
 }
 
-ComputeErrorCode OpenCLAlloc(ref futhark_context context, long min_size, string tag, ref CLMemoryHandle mem)
+bool free_list_first(ref opencl_free_list free_list, ref CLMemoryHandle mem_out)
+{
+    for (int i = 0; i < free_list.capacity; i++)
+    {
+        if (free_list.entries[i].valid)
+        {
+            free_list.entries[i].valid = false;
+            mem_out = free_list.entries[i].mem;
+            free_list.used--;
+            return true;
+        }
+    }
+    return false;
+}
+
+ComputeErrorCode OpenCLAllocActual(ref futhark_context context, long min_size, ref CLMemoryHandle mem)
+{
+    ComputeErrorCode error;
+    mem = CL10.CreateBuffer(context.opencl.context, ComputeMemoryFlags.ReadWrite
+        , new IntPtr(min_size), IntPtr.Zero, out error);
+
+    if (error != ComputeErrorCode.Success)
+    {
+        return error;
+    }
+
+    int x = 2;
+    unsafe
+    {
+        error = CL10.EnqueueWriteBuffer(ctx.opencl.queue, mem, true, IntPtr.Zero, new IntPtr(sizeof(int)), new IntPtr(&x), 0, null, null);
+    }
+
+    return error;
+}
+
+ComputeErrorCode OpenCLAlloc(ref futhark_context context, long min_size, string tag, ref CLMemoryHandle mem_out)
 {
     if (min_size < 0)
     {
@@ -152,7 +187,7 @@ ComputeErrorCode OpenCLAlloc(ref futhark_context context, long min_size, string 
 
     long size = 0;
 
-    if (free_list_find(ref context.free_list, tag, ref size, ref mem))
+    if (free_list_find(ref context.free_list, tag, ref size, ref mem_out))
     {
         if (size >= min_size && size <= min_size * 2)
         {
@@ -160,18 +195,33 @@ ComputeErrorCode OpenCLAlloc(ref futhark_context context, long min_size, string 
         }
         else
         {
-            ComputeErrorCode code1 = CL10.ReleaseMemObject(mem);
+            ComputeErrorCode code1 = CL10.ReleaseMemObject(mem_out);
             if (code1 != ComputeErrorCode.Success)
             {
                 return code1;
             }
         }
     }
+    
+    ComputeErrorCode error = OpenCLAllocActual(ref context, min_size, ref mem_out);
+    while (error == ComputeErrorCode.MemoryObjectAllocationFailure)
+    {
+        CLMemoryHandle mem = ctx.EMPTY_MEM_HANDLE;
+        if (free_list_first(ref context.free_list, ref mem))
+        {
+            error = CL10.ReleaseMemObject(mem);
+            if (error != ComputeErrorCode.Success)
+            {
+                return error;
+            }
+        }
+        else
+        {
+            break;
+        }
 
-    ComputeErrorCode error;
-    mem = CL10.CreateBuffer(context.opencl.context, ComputeMemoryFlags.ReadWrite
-        , new IntPtr(min_size), IntPtr.Zero, out error);
-
+        error = OpenCLAllocActual(ref context, min_size, ref mem_out);
+    }
     return error;
 }
 
@@ -190,7 +240,7 @@ ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, str
         }
     }
 
-    var trash_null = new IntPtr();
+    var trash_null = new IntPtr(0);
     unsafe
     {
         error = CL10.GetMemObjectInfo(mem, ComputeMemoryInfo.Size,
@@ -226,6 +276,7 @@ void free_list_insert(ref futhark_context context, long size, CLMemoryHandle mem
     context.free_list.entries[i].size = size;
     context.free_list.entries[i].tag = tag;
     context.free_list.entries[i].mem = mem;
+    context.free_list.used++;
 }
 
 int free_list_find_invalid(ref futhark_context context)
