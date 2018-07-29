@@ -23,6 +23,7 @@ module Futhark.CodeGen.Backends.GenericCSharp.AST
   where
 
 import Language.Futhark.Core
+import Data.List(intersperse)
 import Futhark.Util.Pretty
 import Language.C.Quote.OpenCL()
 import qualified Language.C.Syntax as C
@@ -229,7 +230,7 @@ data CSStmt = If CSExp [CSStmt] [CSStmt]
             | AssignTyped CSType CSExp (Maybe CSExp)
 
             | Comment String [CSStmt]
-            | Assert CSExp String
+            | Assert CSExp [CSExp]
             | Throw CSExp
             | Exp CSExp
             | Return CSExp
@@ -331,8 +332,12 @@ instance Pretty CSStmt where
 
   ppr (Comment s body) = text "//" <> text s </> stack (map ppr body)
 
-  ppr (Assert e s) =
-    text "Debug.Assert" <> parens(ppr e <> text "," <+> dquotes(text s)) <> semi
+  ppr (Assert e []) =
+    text "Debug.Assert" <> parens(ppr e) <> semi
+
+  ppr (Assert e exps) =
+    let exps' = cat $ intersperse (text "+") $ map ppr exps
+    in text "Debug.Assert" <> parens(ppr e <> text "," <+> exps') <> semi
 
   ppr (Throw e) = text "throw" <+> ppr e <> semi
 

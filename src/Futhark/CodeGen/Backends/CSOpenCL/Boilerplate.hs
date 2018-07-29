@@ -212,7 +212,7 @@ loadKernelByName :: String -> [CSStmt]
 loadKernelByName name =
   [ Reassign (Var $ ctx name)
       (CS.simpleCall "CL10.CreateKernel" [Var "prog", String name, Out $ Var "error"])
-  , AST.Assert (BinOp "==" (Var "error") (Integer 0)) ""
+  , AST.Assert (BinOp "==" (Var "error") (Integer 0)) []
   , If (Var "ctx.debugging")
       [Exp $ consoleErrorWriteLine "Created kernel {0}" [Var $ ctx name]]
       []

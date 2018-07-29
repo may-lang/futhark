@@ -588,7 +588,7 @@ unpackDim arr_name (Imp.ConstSize c) i = do
   let shape_name = Field arr_name "Item2" -- array tuples are currently (data array * dimension array) currently 
   let constant_c = Integer $ toInteger c
   let constant_i = Integer $ toInteger i
-  stm $ Assert (BinOp "==" constant_c (Index shape_name $ IdxExp constant_i)) "constant dimension wrong"
+  stm $ Assert (BinOp "==" constant_c (Index shape_name $ IdxExp constant_i)) [String "constant dimension wrong"]
 
 unpackDim arr_name (Imp.VarSize var) i = do
   let shape_name = Field arr_name "Item2"
@@ -1231,9 +1231,12 @@ compileCode (Imp.Comment s code) = do
   code' <- blockScope $ compileCode code
   stm $ Comment s code'
 
-compileCode (Imp.Assert e msg (loc,locs)) = do
+compileCode (Imp.Assert e (Imp.ErrorMsg parts) (loc,locs)) = do
   e' <- compileExp e
-  stm $ Assert e' ("At " ++ stacktrace ++ ": " ++ msg)
+  let onPart (Imp.ErrorString s) = return $ String s
+      onPart (Imp.ErrorInt32 x) = compileExp x
+  parts' <- mapM onPart parts
+  stm $ Assert e' $ (String $ "At " ++ stacktrace ++ ":"):parts'
   where stacktrace = intercalate " -> " (reverse $ map locStr $ loc:locs)
 
 compileCode (Imp.Call dests fname args) = do
