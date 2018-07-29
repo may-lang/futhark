@@ -175,6 +175,7 @@ ComputeErrorCode OpenCLAlloc(ref futhark_context context, long min_size, string 
     return error;
 }
 
+
 ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, string tag)
 {
     long size = 0;
@@ -189,18 +190,17 @@ ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, str
         }
     }
 
-
-    /*
     var trash_null = new IntPtr();
-    error = CL10.GetMemObjectInfo(mem, ComputeMemoryInfo.Size,
-                                  new IntPtr(sizeof(long)), new IntPtr(size), out trash_null);
+    unsafe
+    {
+        error = CL10.GetMemObjectInfo(mem, ComputeMemoryInfo.Size,
+            new IntPtr(sizeof(long)), new IntPtr(&size), out trash_null);
+    }
 
     if (error == ComputeErrorCode.Success)
     {
         free_list_insert(ref context, size, mem, tag);
     }
-    */
-    free_list_insert(ref context, size, mem, tag);
     return error;
 }
 
