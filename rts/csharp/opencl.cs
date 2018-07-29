@@ -240,6 +240,11 @@ ComputeErrorCode OpenCLFree(ref futhark_context context, CLMemoryHandle mem, str
         }
     }
 
+    if (existing_mem.Value == mem.Value)
+    {
+        return error;
+    }
+
     var trash_null = new IntPtr(0);
     unsafe
     {
