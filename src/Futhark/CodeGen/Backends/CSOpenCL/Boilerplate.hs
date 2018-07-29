@@ -278,22 +278,18 @@ sizeHeuristicsCode (SizeHeuristic platform_name device_type which what) =
                      HeuristicConst x ->
                        Reassign which' (Integer $ toInteger x)
 
-                     HeuristicDeviceInfo s ->
+                     HeuristicDeviceInfo _ ->
                        -- This only works for device info that fits in the variable.
                        Unsafe
                        [
                          Fixed (CS.assignScalarPointer which' (Var "ptr"))
                          [
                            Exp $ CS.simpleCall "CL10.GetDeviceInfo"
-                             [ Var "ctx.opencl.device", Var $ clooString s
+                             [ Var "ctx.opencl.device", Var "ComputeDeviceInfo.MaxComputeUnits"
                              , CS.simpleCall "new IntPtr" [CS.simpleCall "Marshal.SizeOf" [which']]
                              , CS.toIntPtr $ Var "ptr", Out ctxNULL ]
                          ]
                        ]
-
-        clooString s = case s of
-                         "MAX_COMPUTE_UNITS" -> "ComputeDeviceInfo.MaxComputeUnits"
-                         _ -> undefined
 
 ctx :: String -> String
 ctx = (++) "ctx."
