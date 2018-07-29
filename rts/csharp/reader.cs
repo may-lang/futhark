@@ -26,7 +26,7 @@
         char c;
         if (LookaheadBuffer.Count == 0)
         {
-            c = (char) this.s.ReadByte();
+            c = (char) this.b.ReadByte();
         }
         else
         {
@@ -274,11 +274,11 @@
     int ReadStrU16(){return ReadStrInt("u16");}
     int ReadStrU32(){return ReadStrInt("u32");}
     int ReadStrU64(){return ReadStrInt("u64");}
-    sbyte ReadBinI8(){return (sbyte) s.ReadByte();}
+    sbyte ReadBinI8(){return (sbyte) b.ReadByte();}
     short ReadBinI16(){return b.ReadInt16();}
     int ReadBinI32(){return b.ReadInt32();}
     long ReadBinI64(){return b.ReadInt64();}
-    byte ReadBinU8(){return (byte) s.ReadByte();}
+    byte ReadBinU8(){return (byte) b.ReadByte();}
     ushort ReadBinU16(){return b.ReadUInt16();}
     uint ReadBinU32(){return b.ReadUInt32();}
     ulong ReadBinU64(){return b.ReadUInt64();}
@@ -566,7 +566,7 @@
                 byte bin_version = new byte();
                 try
                 {
-                    bin_version = (byte) s.ReadByte();
+                    bin_version = (byte) b.ReadByte();
                 }
                 catch
                 {
@@ -614,7 +614,7 @@
 
     void ReadBinEnsureScalar(string typeName)
     {
-        var bin_dims = s.ReadByte();
+        var bin_dims = b.ReadByte();
         if (bin_dims != 0)
         {
             Console.WriteLine("binary-input: Expected scalar (0 dimensions), but got array with {0} dimensions.", bin_dims);
@@ -642,7 +642,7 @@
         var shape = new int[rank];
         try
         {
-            bin_dims = s.ReadByte();
+            bin_dims = b.ReadByte();
         }
         catch
         {
@@ -679,7 +679,7 @@
                 Console.WriteLine("binary-input: Couldn't read size for dimension {0} of array.", i);
                 Environment.Exit(1);
             }
-            
+
             elem_count *= (int) bin_shape;
             shape[i] = (int) bin_shape;
         }
@@ -688,7 +688,15 @@
         var num_bytes = elem_count * elem_size;
         var tmp = new byte[num_bytes];
         var data = new T[elem_count];
-        s.Read(tmp, 0, num_bytes);
+
+        var to_read = num_bytes;
+        var have_read = 0;
+        while (to_read > 0)
+        {
+            var bytes_read = b.Read(tmp, have_read, to_read);
+            to_read -= bytes_read;
+            have_read += bytes_read;
+        }
 
         if (!BitConverter.IsLittleEndian && elem_size != 1)
         {
