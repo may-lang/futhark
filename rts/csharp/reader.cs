@@ -745,11 +745,11 @@
 
     public float read_f32()
     {
-        return ReadStrDecimal();
+        return ReadStrF32();
     }
     public double read_f64()
     {
-        return ReadStrDecimal();
+        return ReadStrF64();
     }
     public sbyte read_bin_i8()
     {
