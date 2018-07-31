@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE TupleSections #-}
 module Futhark.Compiler.Program
        ( readProgram
@@ -28,7 +27,6 @@ import qualified System.FilePath.Posix as Posix
 import System.IO.Error
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import Language.Haskell.TH.Syntax (Lift)
 
 import Futhark.Error
 import Futhark.FreshNames
@@ -37,7 +35,6 @@ import qualified Language.Futhark as E
 import qualified Language.Futhark.TypeChecker as E
 import Language.Futhark.Semantic
 import Language.Futhark.Futlib
-import Language.Futhark.TH ()
 
 -- | A little monad for reading and type-checking a Futhark program.
 type CompilerM m = ReaderT [FilePath] (StateT ReaderState m)
@@ -53,7 +50,6 @@ data Basis = Basis { basisImports :: Imports
                    , basisRoots :: [String]
                      -- ^ Files that should be implicitly opened.
                    }
-           deriving (Lift)
 
 -- | A basis that contains no imports, and has a properly initialised
 -- name source.
@@ -137,21 +133,31 @@ readImportFile include = do
 
 -- | Read and type-check a Futhark program, including all imports.
 readProgram :: (MonadError CompilerError m, MonadIO m) =>
-               Basis -> FilePath
+               FilePath
             -> m (E.Warnings,
                   Imports,
                   VNameSource)
-readProgram basis fp = readLibrary basis [fp]
+readProgram fp = readLibrary [fp]
+
+readLibrary :: (MonadError CompilerError m, MonadIO m) =>
+               [FilePath]
+             -> m (E.Warnings,
+                   Imports,
+                   VNameSource)
+readLibrary fps = do
+  (_, imps, src) <- runCompilerM emptyBasis $
+    readImport [] $ mkInitialImport "/futlib/prelude"
+  let basis = Basis imps src ["/futlib/prelude"]
+  readLibrary' basis fps
 
 -- | Read and type-check a Futhark library (multiple files, relative
 -- to the same search path), including all imports.
-readLibrary :: (MonadError CompilerError m, MonadIO m) =>
-               Basis -> [FilePath]
-            -> m (E.Warnings,
-                  Imports,
-                  VNameSource)
-readLibrary basis fps =
-  runCompilerM basis (mapM onFile fps)
+readLibrary' :: (MonadError CompilerError m, MonadIO m) =>
+                Basis -> [FilePath]
+             -> m (E.Warnings,
+                   Imports,
+                   VNameSource)
+readLibrary' basis fps = runCompilerM basis $ mapM onFile fps
   where onFile fp =  do
           r <- liftIO $ readFileSafely fp
           case r of

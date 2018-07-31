@@ -34,7 +34,6 @@ import qualified Futhark.Representation.SOACS as I
 import qualified Futhark.TypeCheck as I
 import Futhark.Compiler.Program
 import qualified Language.Futhark as E
-import Language.Futhark.TH ()
 import Futhark.Util.Log
 
 data FutharkConfig = FutharkConfig
@@ -90,12 +89,11 @@ reportingIOErrors = flip catches [Handler onExit, Handler onError]
               exitWith $ ExitFailure 1
 
 runCompilerOnProgram :: FutharkConfig
-                     -> Basis
                      -> Pipeline I.SOACS lore
                      -> Action lore
                      -> FilePath
                      -> IO ()
-runCompilerOnProgram config b pipeline action file = do
+runCompilerOnProgram config pipeline action file = do
   res <- runFutharkM compile $ case futharkVerbose config of
                                  Just _ -> Verbose
                                  Nothing -> NotVerbose
@@ -106,20 +104,19 @@ runCompilerOnProgram config b pipeline action file = do
     Right () ->
       return ()
   where compile = do
-          prog <- runPipelineOnProgram config b pipeline file
+          prog <- runPipelineOnProgram config pipeline file
           when (isJust $ futharkVerbose config) $
             liftIO $ hPutStrLn stderr $ "Running action " ++ actionName action
           actionProcedure action prog
 
 runPipelineOnProgram :: FutharkConfig
-                     -> Basis
                      -> Pipeline I.SOACS tolore
                      -> FilePath
                      -> FutharkM (Prog tolore)
-runPipelineOnProgram config b pipeline file = do
+runPipelineOnProgram config pipeline file = do
   when (pipelineVerbose pipeline_config) $
     logMsg ("Reading and type-checking source program" :: String)
-  (ws, prog_imports, namesrc) <- readProgram b file
+  (ws, prog_imports, namesrc) <- readProgram file
 
   when (futharkWarn config) $ do
     liftIO $ hPutStr stderr $ show ws
